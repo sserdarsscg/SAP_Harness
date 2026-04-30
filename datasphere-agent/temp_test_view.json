@@ -1,0 +1,29 @@
+{
+  "definitions": {
+    "V_TEST_HELLO": {
+      "kind": "entity",
+      "@EndUserText.label": "Test Hello View",
+      "query": {
+        "SELECT": {
+          "from": { "ref": ["V_TEST_HELLO"] },
+          "columns": [
+            { "ref": ["ID"] },
+            { "ref": ["NAME"] }
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "type": "cds.Integer",
+          "key": true,
+          "@EndUserText.label": "ID"
+        },
+        "NAME": {
+          "type": "cds.String",
+          "length": 100,
+          "@EndUserText.label": "Name"
+        }
+      }
+    }
+  }
+}

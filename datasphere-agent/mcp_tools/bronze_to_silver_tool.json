@@ -1,0 +1,31 @@
+{
+  "name": "bronze_to_silver",
+  "description": "Generates and executes a data transformation that moves a table from a raw/landing (bronze) layer to a cleansed/harmonized (silver) layer in SAP Datasphere. The transformation applies basic cleansing rules such as trimming whitespace, adding audit timestamps, and filtering incomplete rows.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "table_name": {
+        "type": "string",
+        "description": "Name of the table to transform (e.g. CUSTOMER, ORDERS)."
+      },
+      "source_layer": {
+        "type": "string",
+        "description": "Schema or layer the source table resides in.",
+        "default": "bronze"
+      },
+      "target_layer": {
+        "type": "string",
+        "description": "Schema or layer the transformed table will be written to.",
+        "default": "silver"
+      }
+    },
+    "required": ["table_name"]
+  },
+  "annotations": {
+    "title": "Bronze to Silver Transformation",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+  }
+}
