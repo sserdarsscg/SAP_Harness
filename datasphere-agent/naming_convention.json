@@ -1,0 +1,35 @@
+{
+  "naming_conventions": {
+    "view": {
+      "prefix": "GV_",
+      "description": "Graphical view naming for Data Builder objects.",
+      "naming_pattern": "^GV_[A-Z0-9_]+$",
+      "layer": "Silver/Gold"
+    },
+    "sql_view": {
+      "prefix": "SV_",
+      "description": "SQL view naming for Gold Propagation layer only. Used for complex logic or performance optimization.",
+      "naming_pattern": "^SV_[A-Z0-9_]+$",
+      "layer": "Gold Propagation",
+      "note": "SQL views should only be created in Gold Propagation layer (30_GP_*)"
+    },
+    "association": {
+      "prefix": "GV_",
+      "description": "Associations are modelled inside Graphical Views (GV_) using CSN cds.Association elements. The host view follows the GV_ naming convention.",
+      "naming_pattern": "^GV_[A-Z0-9_]+$",
+      "cardinality_options": ["to-one", "to-many"],
+      "note": "Association target must be a deployed view or local table in the same or shared space."
+    },
+    "analytical_model": {
+      "prefix": "AM_",
+      "description": "Analytical model naming for reporting and semantic consumption.",
+      "naming_pattern": "^AM_[A-Z0-9_]+$"
+    },
+    "backup": {
+      "separator": "_",
+      "timestamp_format": "%Y%m%d_%H%M",
+      "description": "Logical backup naming for copied objects before modification. Format: <object_name>_<timestamp>",
+      "naming_pattern": "^[A-Z0-9_]+_[0-9]{8}_[0-9]{4}$"
+    }
+  }
+}

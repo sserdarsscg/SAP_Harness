@@ -29,24 +29,66 @@ import json
 import os
 import tempfile
 from agent.skill_registry import register_skill
-from executors.mock_datasphere_cli import execute_sql
 
-# Valid view prefixes per naming convention
-VALID_VIEW_PREFIXES = ("GV_", "SV_", "AM_", "ER_")
+# Naming convention file lives at datasphere-agent root
+NAMING_CONVENTION_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "naming_convention.json",
+)
 
 
-def _ensure_prefix(view_name: str) -> str:
-    """Ensure view name has a valid prefix. Default to GV_ if missing."""
+def _load_naming_conventions() -> dict:
+    """Load naming convention configuration from JSON file."""
+    with open(NAMING_CONVENTION_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _get_view_prefix(view_type: str = "GV") -> str:
+    """Read the configured view prefix from naming_convention.json based on view type.
+    
+    Args:
+        view_type: "GV" for Graphical View (default), "SV" for SQL View
+    
+    Returns:
+        The configured prefix (e.g., "GV_" or "SV_")
+    """
+    config = _load_naming_conventions()
+    
+    if view_type.upper() == "SV":
+        prefix = config.get("naming_conventions", {}).get("sql_view", {}).get("prefix", "")
+        if not prefix:
+            raise ValueError("Missing naming_conventions.sql_view.prefix in naming_convention.json")
+    else:
+        # Default to GV (Graphical View)
+        prefix = config.get("naming_conventions", {}).get("view", {}).get("prefix", "")
+        if not prefix:
+            raise ValueError("Missing naming_conventions.view.prefix in naming_convention.json")
+    
+    return prefix.upper()
+
+
+def _ensure_prefix(view_name: str, view_type: str = "GV") -> str:
+    """Ensure view name uses the configured view prefix.
+    
+    Args:
+        view_name: Technical name (e.g., DOC_ITEM_VIEW)
+        view_type: "GV" for Graphical View (default), "SV" for SQL View
+    
+    Returns:
+        Prefixed name (e.g., GV_DOC_ITEM_VIEW or SV_DOC_ITEM_VIEW)
+    """
     name = view_name.upper()
-    if any(name.startswith(p) for p in VALID_VIEW_PREFIXES):
+    prefix = _get_view_prefix(view_type)
+    if name.startswith(prefix):
         return name
-    return f"GV_{name}"
+    return f"{prefix}{name}"
 
 
 def generate_csn(
     view_name: str,
     columns: list[dict],
     business_name: str | None = None,
+    view_type: str = "GV",
 ) -> dict:
     """
     Build a CSN JSON definition for a Datasphere view.
@@ -56,11 +98,12 @@ def generate_csn(
         columns:       List of dicts with keys: name, type, key (optional)
                        type uses CDS types: cds.Integer, cds.String, cds.Decimal, etc.
         business_name: Human-readable label (defaults to view_name)
+        view_type:     "GV" for Graphical View (default), "SV" for SQL View
     """
     if not business_name:
         business_name = view_name
 
-    view_name = _ensure_prefix(view_name)
+    view_name = _ensure_prefix(view_name, view_type)
 
     # Build elements dict
     elements = {}
@@ -114,11 +157,12 @@ DEFAULT_COLUMNS = [
 def execute(params: dict) -> dict:
     """
     Skill entry point for CLI planner.
-    Generates CSN and shows the dry-run output.
+    Generates CSN for a view.
     """
     import re
 
     user_prompt = params.get("user_prompt", "")
+    view_type = params.get("view_type", "GV").upper()
 
     # Try to extract view name from prompt
     view_name = "V_NEW_VIEW"
@@ -126,16 +170,15 @@ def execute(params: dict) -> dict:
     if match:
         view_name = match.group(1).upper()
 
-    csn = generate_csn(view_name, DEFAULT_COLUMNS)
+    csn = generate_csn(view_name, DEFAULT_COLUMNS, view_type=view_type)
     csn_text = json.dumps(csn, indent=2)
-
-    output = execute_sql(f"-- CSN definition for {view_name}:\n{csn_text}")
 
     return {
         "status": "success",
         "view_name": view_name,
+        "view_type": view_type,
         "csn": csn,
-        "output": output,
+        "output": f"CSN definition generated for {view_type} {view_name}",
     }
 
 

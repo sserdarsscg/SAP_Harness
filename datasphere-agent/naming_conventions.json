@@ -1,0 +1,19 @@
+{
+  "naming_conventions": {
+    "view": {
+      "prefix": "GV_",
+      "description": "Graphical view naming for Data Builder objects.",
+      "naming_pattern": "^GV_[A-Z0-9_]+$"
+    },
+    "association": {
+      "prefix": "AS_",
+      "description": "Association object naming for reusable relationship definitions.",
+      "naming_pattern": "^AS_[A-Z0-9_]+$"
+    },
+    "analytical_model": {
+      "prefix": "AM_",
+      "description": "Analytical model naming for reporting and semantic consumption.",
+      "naming_pattern": "^AM_[A-Z0-9_]+$"
+    }
+  }
+}

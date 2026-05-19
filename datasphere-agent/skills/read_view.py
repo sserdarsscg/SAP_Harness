@@ -10,7 +10,6 @@ Known deployed views (DE_IND_CONTENT_HDB space):
 """
 
 from agent.skill_registry import register_skill
-from executors.mock_datasphere_cli import execute_sql
 
 
 def generate_read_sql(
@@ -58,13 +57,12 @@ def execute(params: dict) -> dict:
         view_name = "ADSO_Sales_Document_Item_Data_V"
 
     sql = generate_read_sql(view_name)
-    executor_output = execute_sql(sql)
 
     return {
         "status": "success",
         "view": view_name,
         "sql": sql,
-        "output": executor_output,
+        "output": "SQL generated successfully",
     }
 
 

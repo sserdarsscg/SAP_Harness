@@ -1,7 +1,7 @@
 # Datasphere Agent – MCP Skill System
 
 Minimal MCP-compatible agent skill system for SAP Datasphere.
-Everything is a **safe dry-run mock** – no real Datasphere connection.
+All operations run **LIVE** against your Datasphere tenant.
 
 ## Project Structure
 
@@ -19,7 +19,7 @@ datasphere-agent/
 │
 ├─ executors/
 │  ├─ __init__.py
-│  ├─ mock_datasphere_cli.py # Dry-run executor (no real access)
+│  ├─ datasphere_cli.py      # Live Datasphere CLI executor
 │
 ├─ mcp_tools/
 │  ├─ bronze_to_silver_tool.json  # MCP tool descriptor
@@ -60,12 +60,11 @@ GitHub Copilot Agent Mode (or any MCP client) can discover and call them.
 
 1. Open the workspace in VS Code.
 2. A `.vscode/mcp.json` is provided – VS Code will show a **Start** button
-   next to the `datasphere-mock` server entry.
+   next to the `datasphere-agent` server entry.
 3. Click **Start** to launch the MCP server.
 4. Open **Copilot Chat → Agent Mode**.
-5. The `bronze_to_silver` tool appears in the tool list – enable it.
-6. Prompt: *"Move the bronze CUSTOMER table to silver"* – Copilot will
-   invoke the tool and display the generated SQL + dry-run status.
+5. The available tools appear in the tool list – enable them.
+6. Prompt: *"Create a SQL view named SV_CUSTOMERS from VR1_CUSTOMER_TD_001 in ZZ_BDC_HARNESS_1"* – Copilot will invoke the tool and create the view live in Datasphere.
 
 ### Manual terminal test
 
@@ -85,8 +84,8 @@ Expected response (single line, formatted here for readability):
   "result": {
     "tools": [
       {
-        "name": "bronze_to_silver",
-        "description": "Generate and dry-run a SQL transformation …",
+        "name": "create_view",
+        "description": "Create a new Graphical (GV_) or SQL (SV_) view in Datasphere …",
         "inputSchema": { "…": "…" }
       }
     ]
@@ -97,14 +96,10 @@ Expected response (single line, formatted here for readability):
 Call the tool:
 
 ```powershell
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"bronze_to_silver","arguments":{"table_name":"CUSTOMER"}}}' | python mcp_server.py
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_view","arguments":{"view_name":"TEST_VIEW","view_type":"GV","space_id":"ZZ_BDC_HARNESS_1"}}}' | python mcp_server.py
 ```
 
-Expected response contains the generated SQL and:
-
-```
-[Mock Datasphere CLI] Status: OK (dry-run, not executed)
-```
+Expected response contains the created view CSN and success status (view is created live in Datasphere).
 
 ---
 

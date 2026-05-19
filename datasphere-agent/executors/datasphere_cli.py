@@ -18,6 +18,8 @@ import json
 import subprocess
 import logging
 import shutil
+import os
+from pathlib import Path
 
 log = logging.getLogger("datasphere-cli")
 
@@ -29,17 +31,38 @@ def _find_cli() -> str:
     """Locate the datasphere CLI executable on PATH."""
     cli_path = shutil.which("datasphere")
     if cli_path is None:
-        # Try common npm global location on Windows
-        import os
-        npm_path = os.path.join(
-            os.environ.get("APPDATA", ""), "npm", "datasphere.cmd"
-        )
-        if os.path.exists(npm_path):
-            return npm_path
+        # Try common locations on Windows when PATH is not initialized.
+        # Order matters: prefer workspace-local portable CLI first.
+        current_file = Path(__file__).resolve()
+        workspace_root = current_file.parents[2]
+        candidates = [
+            workspace_root / ".tools" / "node" / "datasphere.cmd",
+            Path(os.environ.get("APPDATA", "")) / "npm" / "datasphere.cmd",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
         raise FileNotFoundError(
             "datasphere CLI not found. Install with: npm install -g @sap/datasphere-cli"
         )
     return cli_path
+
+
+def _build_cli_env(cli_path: str) -> dict[str, str]:
+    """Build subprocess environment with resilient PATH entries for Node/npm."""
+    env = os.environ.copy()
+    current_file = Path(__file__).resolve()
+    workspace_root = current_file.parents[2]
+
+    extra_paths = [
+        str(workspace_root / ".tools" / "node"),
+        str(Path(os.environ.get("APPDATA", "")) / "npm"),
+        str(Path(cli_path).parent),
+    ]
+
+    existing = env.get("PATH", "")
+    env["PATH"] = os.pathsep.join([*extra_paths, existing])
+    return env
 
 
 def _run_cli(args: list[str]) -> dict:
@@ -49,6 +72,7 @@ def _run_cli(args: list[str]) -> dict:
     """
     cli = _find_cli()
     full_cmd = [cli] + args + ["--host", HOST]
+    env = _build_cli_env(cli)
 
     log.info("Running: datasphere %s", " ".join(args))
 
@@ -58,6 +82,7 @@ def _run_cli(args: list[str]) -> dict:
             capture_output=True,
             text=True,
             timeout=60,
+            env=env,
         )
 
         stdout = result.stdout.strip()
@@ -69,6 +94,8 @@ def _run_cli(args: list[str]) -> dict:
                 "exit_code": result.returncode,
                 "command": f"datasphere {' '.join(args)}",
                 "error": stderr or stdout or "Unknown error",
+                "stdout": stdout,
+                "stderr": stderr,
             }
 
         # Try to parse as JSON (most CLI commands return JSON)

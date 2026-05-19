@@ -9,7 +9,6 @@ This is a simplified example – real transformations would be more complex.
 
 import re
 from agent.skill_registry import register_skill
-from executors.mock_datasphere_cli import execute_sql
 
 
 def _extract_table_name(prompt: str) -> str:
@@ -73,20 +72,17 @@ def execute(params: dict) -> dict:
     Skill entry point.
     1. Extract table name from user prompt
     2. Generate transformation SQL
-    3. Send SQL to the executor
+    3. Return SQL for execution
     """
     user_prompt = params.get("user_prompt", "")
     table_name = _extract_table_name(user_prompt)
     sql = _generate_sql(table_name)
 
-    # Delegate to the mock executor
-    executor_output = execute_sql(sql)
-
     return {
         "status": "success",
         "table": table_name,
         "sql": sql,
-        "output": executor_output,
+        "output": "SQL generated successfully",
     }
 
 

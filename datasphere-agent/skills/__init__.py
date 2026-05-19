@@ -10,4 +10,6 @@ Each skill module should:
 from skills import bronze_to_silver  # noqa: F401
 from skills import read_view          # noqa: F401
 from skills import create_view        # noqa: F401
+from skills import create_backup      # noqa: F401
 from skills import share_to_space     # noqa: F401
+from skills import create_association  # noqa: F401

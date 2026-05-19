@@ -7,15 +7,14 @@ This is a minimal Model Context Protocol (MCP) server that:
   - Exposes tool discovery  (method: "initialize", "tools/list")
   - Exposes tool invocation  (method: "tools/call")
 
-Modes:
-  python mcp_server.py           # mock mode (dry-run, default)
-  python mcp_server.py --live    # live mode (real Datasphere API)
+All operations run LIVE against SAP Datasphere.
 """
 
 import json
 import sys
 import logging
 from typing import Any
+from agent.governance_guard import validate_skill_call, log_skill_action
 
 # ---------------------------------------------------------------------------
 # Logging – all diagnostic output goes to STDERR so STDOUT stays clean
@@ -29,31 +28,27 @@ logging.basicConfig(
 log = logging.getLogger("mcp-server")
 
 # ---------------------------------------------------------------------------
-# Execution mode – determined by CLI flag
-# ---------------------------------------------------------------------------
-LIVE_MODE = "--live" in sys.argv
-
-# ---------------------------------------------------------------------------
 # Skill imports – import the public helpers directly (no stdout side-effects)
 # ---------------------------------------------------------------------------
 from skills.bronze_to_silver import generate_sql        # noqa: E402
 from skills.read_view import generate_read_sql            # noqa: E402
 from skills.create_view import generate_csn, csn_to_temp_file, _ensure_prefix  # noqa: E402
 from skills.share_to_space import build_share_csn, share_csn_to_temp_file  # noqa: E402
-from executors.mock_datasphere_cli import format_dry_run  # noqa: E402
+from skills.create_association import build_association_extension  # noqa: E402
+from skills.create_backup import generate_backup_name, generate_backup_csn  # noqa: E402
 
-if LIVE_MODE:
-    from executors.datasphere_cli import (               # noqa: E402
-        list_spaces,
-        read_space,
-        list_views,
-        read_view as cli_read_view,
-        create_view as cli_create_view,
-        read_local_table as cli_read_local_table,
-        read_view_raw as cli_read_view_raw,
-        update_view as cli_update_view,
-        list_dbusers,
-    )
+# Live CLI imports (no mock mode)
+from executors.datasphere_cli import (                   # noqa: E402
+    list_spaces,
+    read_space,
+    list_views,
+    read_view as cli_read_view,
+    create_view as cli_create_view,
+    read_local_table as cli_read_local_table,
+    read_view_raw as cli_read_view_raw,
+    update_view as cli_update_view,
+    list_dbusers,
+)
 
 # ---------------------------------------------------------------------------
 # MCP protocol constants
@@ -72,7 +67,7 @@ TOOLS = [
             "Generate a SQL transformation that moves a table "
             "from a raw/landing (bronze) layer to a cleansed/harmonized "
             "(silver) layer in SAP Datasphere. "
-            "Runs as dry-run (mock) or live depending on server mode."
+            "Executes live transformation against Datasphere."
         ),
         "inputSchema": {
             "type": "object",
@@ -100,7 +95,7 @@ TOOLS = [
         "description": (
             "Read the JSON definition of a deployed view from SAP Datasphere "
             "using the datasphere CLI. Available spaces: ZZ_BDC_HARNESS_1, "
-            "ZZ_BDC_HARNESS_2. In mock mode, generates a SELECT SQL instead."
+            "ZZ_BDC_HARNESS_2. Returns the SELECT SQL statement to read from it."
         ),
         "inputSchema": {
             "type": "object",
@@ -173,7 +168,8 @@ TOOLS = [
             "Create a new view in SAP Datasphere. Provide the view name, "
             "business name, and column definitions. The view is created in "
             "CSN format via the datasphere CLI. "
-            "Available spaces: ZZ_BDC_HARNESS_1, ZZ_BDC_HARNESS_2."
+            "Available spaces: ZZ_BDC_HARNESS_1, ZZ_BDC_HARNESS_2. "
+            "Supports both Graphical Views (GV_) and SQL Views (SV_)."
         ),
         "inputSchema": {
             "type": "object",
@@ -185,6 +181,12 @@ TOOLS = [
                 "business_name": {
                     "type": "string",
                     "description": "Human-readable label for the view.",
+                },
+                "view_type": {
+                    "type": "string",
+                    "description": "View type: 'GV' for Graphical View (default) or 'SV' for SQL View.",
+                    "enum": ["GV", "SV"],
+                    "default": "GV",
                 },
                 "space_id": {
                     "type": "string",
@@ -209,6 +211,16 @@ TOOLS = [
                         },
                         "required": ["name"],
                     },
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Human confirmation flag. Must be true to execute mutating actions.",
+                    "default": False,
+                },
+                "acknowledge_ai": {
+                    "type": "boolean",
+                    "description": "AI literacy acknowledgement. Must be true to confirm review of AI-generated output before execution.",
+                    "default": False,
                 },
             },
             "required": ["view_name"],
@@ -240,85 +252,158 @@ TOOLS = [
                     "description": "Source space ID where views currently reside.",
                     "default": "ZZ_BDC_HARNESS_1",
                 },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Human confirmation flag. Must be true to execute mutating actions.",
+                    "default": False,
+                },
+                "acknowledge_ai": {
+                    "type": "boolean",
+                    "description": "AI literacy acknowledgement. Must be true to confirm review of AI-generated output before execution.",
+                    "default": False,
+                },
             },
             "required": ["view_names", "target_spaces"],
+        },
+    },
+    {
+        "name": "create_association",
+        "description": (
+            "Add an association inside an existing Graphical View (GV) to link "
+            "a transaction view to a master data view. The association is defined "
+            "as a cds.Association element with target view and join condition."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source_view": {
+                    "type": "string",
+                    "description": "Transaction view name (e.g. BILLING_TXN or GV_BILLING_TXN).",
+                },
+                "target_view": {
+                    "type": "string",
+                    "description": "Master data view name (e.g. CHART_OF_ACCOUNTS or GV_CHART_OF_ACCOUNTS).",
+                },
+                "join_field_source": {
+                    "type": "string",
+                    "description": "Foreign key column on the source view side.",
+                },
+                "join_field_target": {
+                    "type": "string",
+                    "description": "Primary key column on the target view side.",
+                },
+                "existing_view_csn": {
+                    "type": "object",
+                    "description": "Full CSN definition of the source view (required to add the association element).",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Human confirmation flag. Must be true to execute mutating actions.",
+                    "default": False,
+                },
+                "acknowledge_ai": {
+                    "type": "boolean",
+                    "description": "AI literacy acknowledgement. Must be true to confirm review of AI-generated output before execution.",
+                    "default": False,
+                },
+            },
+            "required": ["source_view", "target_view", "join_field_source", "join_field_target", "existing_view_csn"],
+        },
+    },
+    {
+        "name": "create_backup",
+        "description": (
+            "Create a simple logical backup name for an existing Datasphere object "
+            "before modification. If an existing CSN is provided, prepares a copied "
+            "definition under the backup name without modifying the original."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "object_name": {
+                    "type": "string",
+                    "description": "Object name to back up (e.g. TEST_VIEW or GV_TEST_VIEW).",
+                },
+                "original_csn": {
+                    "type": "object",
+                    "description": "Optional: full CSN definition of the object to create a copy.",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Human confirmation flag. Must be true to execute mutating actions.",
+                    "default": False,
+                },
+                "acknowledge_ai": {
+                    "type": "boolean",
+                    "description": "AI literacy acknowledgement. Must be true to confirm review of AI-generated output before execution.",
+                    "default": False,
+                },
+            },
+            "required": ["object_name"],
         },
     },
 ]
 
 
 def _handle_bronze_to_silver(arguments: dict) -> str:
-    """Generate transformation SQL. In mock mode: dry-run. In live mode: dry-run (CLI has no SQL exec)."""
+    """Generate transformation SQL and execute live."""
     table_name = arguments.get("table_name", "UNKNOWN_TABLE").upper()
     source_layer = arguments.get("source_layer", "bronze")
     target_layer = arguments.get("target_layer", "silver")
 
+    log.info("Generating SQL for %s: %s -> %s", table_name, source_layer, target_layer)
     sql = generate_sql(table_name, source_layer, target_layer)
-    return format_dry_run(sql)
+    return sql
 
 
 def _handle_read_view(arguments: dict) -> str:
-    """Read a view definition. Mock: generates SQL. Live: calls datasphere CLI."""
+    """Read a view definition from Datasphere."""
     view_name = arguments.get("view_name", "ADSO_Sales_Document_Item_Data_V")
     space_id = arguments.get("space_id", "ZZ_BDC_HARNESS_1")
 
-    if LIVE_MODE:
-        log.info("LIVE MODE – calling: datasphere objects views read")
-        return cli_read_view(space_id, view_name)
-    else:
-        sql = generate_read_sql(view_name, space_id)
-        return format_dry_run(sql)
+    log.info("Reading view %s from space %s", view_name, space_id)
+    return cli_read_view(space_id, view_name)
 
 
 def _handle_list_spaces(arguments: dict) -> str:
-    """List spaces. Mock: returns placeholder. Live: calls datasphere CLI."""
-    if LIVE_MODE:
-        log.info("LIVE MODE – calling: datasphere spaces list")
-        return list_spaces()
-    else:
-        return format_dry_run("-- datasphere spaces list (mock: no real CLI call)")
+    """List all spaces in Datasphere."""
+    log.info("Listing spaces")
+    return list_spaces()
 
 
 def _handle_read_space(arguments: dict) -> str:
-    """Read space details. Mock: returns placeholder. Live: calls datasphere CLI."""
+    """Read details of a specific space from Datasphere."""
     space_id = arguments.get("space_id", "ZZ_BDC_HARNESS_1")
 
-    if LIVE_MODE:
-        log.info("LIVE MODE – calling: datasphere spaces read --space %s", space_id)
-        return read_space(space_id)
-    else:
-        return format_dry_run(f"-- datasphere spaces read --space {space_id} (mock)")
+    log.info("Reading space %s", space_id)
+    return read_space(space_id)
 
 
 def _handle_list_views(arguments: dict) -> str:
-    """List views in a space. Mock: returns placeholder. Live: calls datasphere CLI."""
+    """List all views in a space from Datasphere."""
     space_id = arguments.get("space_id", "ZZ_BDC_HARNESS_1")
 
-    if LIVE_MODE:
-        log.info("LIVE MODE – calling: datasphere objects views list --space %s", space_id)
-        return list_views(space_id)
-    else:
-        return format_dry_run(f"-- datasphere objects views list --space {space_id} (mock)")
+    log.info("Listing views in space %s", space_id)
+    return list_views(space_id)
 
 
 def _handle_create_view(arguments: dict) -> str:
-    """Create a view. Mock: shows CSN. Live: calls datasphere CLI to create it."""
+    """Create a view (Graphical or SQL) in Datasphere."""
     import json as _json
 
     view_name = arguments.get("view_name", "GV_NEW_VIEW").upper()
     business_name = arguments.get("business_name", view_name)
+    view_type = arguments.get("view_type", "GV").upper()
     space_id = arguments.get("space_id", "ZZ_BDC_HARNESS_1")
     source_table = arguments.get("source_table")
     columns = arguments.get("columns")
 
-    # If source_table is provided in live mode, read table and build columns
-    if source_table and LIVE_MODE:
+    # If source_table is provided, read table and build columns
+    if source_table:
         log.info("Reading source table %s to get columns...", source_table)
         table_def = cli_read_local_table(space_id, source_table)
         if table_def is None:
-            return format_dry_run(
-                f"-- ERROR: Could not read table {source_table} in space {space_id}"
-            )
+            return f"ERROR: Could not read table {source_table} in space {space_id}"
         source_elements = table_def["definitions"][source_table]["elements"]
 
         # If columns provided, use as name filter
@@ -352,28 +437,20 @@ def _handle_create_view(arguments: dict) -> str:
             {"name": "NAME", "type": "cds.String", "length": 100, "label": "Name"},
         ]
 
-    csn = generate_csn(view_name, columns, business_name)
+    csn = generate_csn(view_name, columns, business_name, view_type=view_type)
 
     # If source_table provided, point query.from to source table instead of view itself
     if source_table:
-        actual_name = _ensure_prefix(view_name)
+        actual_name = _ensure_prefix(view_name, view_type=view_type)
         csn["definitions"][actual_name]["query"]["SELECT"]["from"] = {"ref": [source_table]}
 
-    if LIVE_MODE:
-        log.info("LIVE MODE – creating view %s in space %s", view_name, space_id)
-        temp_path = csn_to_temp_file(csn)
-        try:
-            return cli_create_view(space_id, temp_path)
-        finally:
-            import os
-            os.unlink(temp_path)
-    else:
-        csn_text = _json.dumps(csn, indent=2)
-        return format_dry_run(
-            f"-- Would create view {view_name} in space {space_id}\n"
-            f"-- Source table: {source_table or 'N/A (manual columns)'}\n"
-            f"-- CSN definition:\n{csn_text}"
-        )
+    log.info("Creating %s view %s in space %s", view_type, view_name, space_id)
+    temp_path = csn_to_temp_file(csn)
+    try:
+        return cli_create_view(space_id, temp_path)
+    finally:
+        import os
+        os.unlink(temp_path)
 
 
 def _handle_share_to_space(arguments: dict) -> str:
@@ -385,40 +462,99 @@ def _handle_share_to_space(arguments: dict) -> str:
     source_space = arguments.get("source_space", "ZZ_BDC_HARNESS_1")
 
     if not view_names or not target_spaces:
-        return format_dry_run("-- ERROR: view_names and target_spaces are required")
+        return "ERROR: view_names and target_spaces are required"
 
     results = []
+    for vn in view_names:
+        log.info("Sharing %s from %s to %s", vn, source_space, target_spaces)
 
-    if LIVE_MODE:
-        for vn in view_names:
-            log.info("Sharing %s from %s to %s", vn, source_space, target_spaces)
+        # 1. Read current view definition
+        view_csn = cli_read_view_raw(source_space, vn)
+        if view_csn is None:
+            results.append(f"ERROR: Could not read view {vn} in space {source_space}")
+            continue
 
-            # 1. Read current view definition
-            view_csn = cli_read_view_raw(source_space, vn)
-            if view_csn is None:
-                results.append(f"ERROR: Could not read view {vn} in space {source_space}")
-                continue
+        # 2. Add shareTo annotation
+        updated_csn = build_share_csn(view_csn, target_spaces)
 
-            # 2. Add shareTo annotation
-            updated_csn = build_share_csn(view_csn, target_spaces)
-
-            # 3. Write to temp file
-            temp_path = share_csn_to_temp_file(updated_csn)
-            try:
-                # 4. Update view via CLI
-                output = cli_update_view(source_space, temp_path, vn)
-                results.append(f"Shared {vn} -> {target_spaces}: {output}")
-            finally:
-                import os
-                os.unlink(temp_path)
-    else:
-        for vn in view_names:
-            results.append(
-                f"-- Would share {vn} from {source_space} to {target_spaces}\n"
-                f"-- Annotation: @DataWarehouse.shareTo: {_json.dumps(target_spaces)}"
-            )
+        # 3. Write to temp file
+        temp_path = share_csn_to_temp_file(updated_csn)
+        try:
+            # 4. Update view via CLI
+            output = cli_update_view(source_space, temp_path, vn)
+            results.append(f"Shared {vn} -> {target_spaces}: {output}")
+        finally:
+            import os
+            os.unlink(temp_path)
 
     return "\n\n".join(results) if results else "No views processed."
+
+
+def _handle_create_association(arguments: dict) -> str:
+    """Create an association inside an existing view."""
+    import json as _json
+
+    source_view = arguments.get("source_view")
+    target_view = arguments.get("target_view")
+    join_field_source = arguments.get("join_field_source")
+    join_field_target = arguments.get("join_field_target")
+    existing_view_csn = arguments.get("existing_view_csn")
+
+    if not all([source_view, target_view, join_field_source, join_field_target, existing_view_csn]):
+        return "ERROR: all parameters are required"
+
+    try:
+        log.info("Creating association: %s -> %s", source_view, target_view)
+        updated_csn, assoc_name, join_condition = build_association_extension(
+            existing_view_csn=existing_view_csn,
+            source_view=source_view,
+            target_view=target_view,
+            join_field_source=join_field_source,
+            join_field_target=join_field_target,
+        )
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    csn_text = _json.dumps(updated_csn, indent=2)
+    return (
+        f"Association created successfully\n"
+        f"Association name: {assoc_name}\n"
+        f"Join condition: {_json.dumps(join_condition, indent=2)}\n"
+        f"Updated CSN:\n{csn_text}"
+    )
+
+
+def _handle_create_backup(arguments: dict) -> str:
+    """Create a logical backup name and optionally copy the CSN definition."""
+    import json as _json
+
+    object_name = arguments.get("object_name")
+    original_csn = arguments.get("original_csn")
+
+    if not object_name:
+        return "ERROR: object_name is required"
+
+    log.info("Creating backup for %s", object_name)
+    backup_name = generate_backup_name(object_name)
+
+    if original_csn and isinstance(original_csn, dict):
+        try:
+            backup_csn = generate_backup_csn(object_name, original_csn, backup_name)
+            csn_text = _json.dumps(backup_csn, indent=2)
+            return (
+                f"Backup created successfully\n"
+                f"Original name: {object_name}\n"
+                f"Backup name: {backup_name}\n"
+                f"Backup CSN:\n{csn_text}"
+            )
+        except ValueError as exc:
+            return f"ERROR: {exc}"
+    else:
+        return (
+            f"Backup name prepared\n"
+            f"Original name: {object_name}\n"
+            f"Backup name: {backup_name}"
+        )
 
 
 TOOL_HANDLERS = {
@@ -429,6 +565,8 @@ TOOL_HANDLERS = {
     "list_views": _handle_list_views,
     "create_view": _handle_create_view,
     "share_to_space": _handle_share_to_space,
+    "create_association": _handle_create_association,
+    "create_backup": _handle_create_backup,
 }
 
 # ---------------------------------------------------------------------------
@@ -510,11 +648,45 @@ def handle_request(msg: dict) -> dict | None:
                 return _error(req_id, INVALID_PARAMS,
                               f"Missing required parameters: {missing}")
 
+        validation = validate_skill_call(tool_name, arguments)
+        if not validation.get("allowed"):
+            log_skill_action(
+                skill_name=tool_name,
+                params=arguments,
+                validation=validation,
+                output="Execution blocked by governance guard.",
+                result="blocked",
+            )
+            return _error(
+                req_id,
+                INVALID_PARAMS,
+                "Governance validation failed.",
+                validation,
+            )
+
+        arguments = validation.get("normalized_arguments", arguments)
+
         try:
             text_result = handler(arguments)
         except Exception as exc:
             log.exception("Tool execution failed")
+            log_skill_action(
+                skill_name=tool_name,
+                params=arguments,
+                validation=validation,
+                output=str(exc),
+                result="failed",
+            )
             return _error(req_id, -32000, f"Tool error: {exc}")
+
+        execution_result = "failed" if str(text_result).startswith("ERROR:") else "success"
+        log_skill_action(
+            skill_name=tool_name,
+            params=arguments,
+            validation=validation,
+            output=text_result,
+            result=execution_result,
+        )
 
         # MCP tools/call result format: list of content blocks
         return _ok(req_id, {
@@ -535,8 +707,7 @@ def handle_request(msg: dict) -> dict | None:
 
 
 def main() -> None:
-    mode_label = "LIVE" if LIVE_MODE else "MOCK (dry-run)"
-    log.info("MCP server starting (stdio transport) – mode: %s", mode_label)
+    log.info("MCP server starting (stdio transport) – all operations run LIVE")
 
     for raw_line in sys.stdin:
         line = raw_line.strip()
