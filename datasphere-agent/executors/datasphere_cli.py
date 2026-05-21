@@ -264,3 +264,16 @@ def update_view(space_id: str, csn_json_path: str, technical_name: str) -> str:
         "--save-anyway",
     ])
     return _format_result(result)
+
+
+def update_view_no_deploy(space_id: str, csn_json_path: str, technical_name: str) -> str:
+    """Run: datasphere objects views update ... --save-anyway --no-deploy (save only, skip deployment)"""
+    result = _run_cli([
+        "objects", "views", "update",
+        "--space", space_id,
+        "--technical-name", technical_name,
+        "--file-path", csn_json_path,
+        "--save-anyway",
+        "--no-deploy",
+    ])
+    return _format_result(result)

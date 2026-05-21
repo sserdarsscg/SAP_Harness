@@ -11,9 +11,21 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from datetime import datetime
 
 from agent.skill_registry import register_skill
+
+
+def _extract_object_name(prompt: str) -> str | None:
+    """Extract a view technical name from a natural language prompt."""
+    match = re.search(r'\b([A-Z]{2}_\w+)\b', prompt.upper())
+    if match:
+        return match.group(1)
+    match = re.search(r'backup\s+(?:view\s+|of\s+|for\s+)?(\w+)', prompt, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return None
 
 
 NAMING_CONVENTION_PATH = os.path.join(
@@ -47,11 +59,14 @@ def _get_view_prefix() -> str:
 
 
 def normalize_object_name(object_name: str) -> str:
-    """Normalize an object name using the configured view prefix when needed."""
+    """Normalize an object name: leave it as-is if it already has a XX_ prefix
+    (e.g. SV_, GV_, AM_), otherwise prepend the default view prefix.
+    """
     name = object_name.upper()
-    prefix = _get_view_prefix()
-    if name.startswith(prefix):
+    # If already has any two-letter prefix (SV_, GV_, AM_, etc.) keep it as-is
+    if re.match(r'^[A-Z]{2}_', name):
         return name
+    prefix = _get_view_prefix()
     return f"{prefix}{name}"
 
 
@@ -90,36 +105,91 @@ def generate_backup_csn(object_name: str, original_csn: dict, backup_name: str) 
 
 
 def execute(params: dict) -> dict:
-    """Skill entry point for simple logical backups.
+    """Skill entry point – creates a backup view in Datasphere.
 
     Required params:
-        object_name
+        object_name  – technical name of the existing view to back up
 
     Optional params:
-        original_csn
+        space_id     – Datasphere space (default: ZZ_BDC_HARNESS_1)
     """
-    object_name = params.get("object_name") or params.get("view_name")
+    import json as _json
+    import os
+    import tempfile
+
+    from executors.datasphere_cli import create_view as cli_create_view, read_view_raw
+
+    object_name = (
+        params.get("object_name")
+        or params.get("view_name")
+        or _extract_object_name(params.get("user_prompt", ""))
+    )
     if not object_name:
         return {"status": "error", "message": "Missing required param: object_name"}
 
+    space_id = params.get("space_id", "ZZ_BDC_HARNESS_1")
     normalized_name = normalize_object_name(object_name)
-    backup_name = generate_backup_name(normalized_name)
-    original_csn = params.get("original_csn")
 
-    result = {
+    # 1. Verify the original object exists in Datasphere
+    original_csn = read_view_raw(space_id, normalized_name)
+    if original_csn is None:
+        return {
+            "status": "error",
+            "message": (
+                f"Object '{normalized_name}' not found in space '{space_id}'. "
+                "Only existing objects can be backed up."
+            ),
+        }
+
+    # 2. Generate the backup name
+    backup_name = generate_backup_name(normalized_name)
+
+    # 3. Prevent overwriting an existing backup
+    existing_backup = read_view_raw(space_id, backup_name)
+    if existing_backup is not None:
+        return {
+            "status": "error",
+            "message": (
+                f"Backup '{backup_name}' already exists in space '{space_id}'. "
+                "Will not overwrite an existing backup."
+            ),
+        }
+
+    # 4. Build the backup CSN
+    try:
+        backup_csn = generate_backup_csn(normalized_name, original_csn, backup_name)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+
+    # 5. Persist the backup view to Datasphere via CLI
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    )
+    try:
+        _json.dump(backup_csn, tmp, ensure_ascii=False, indent=2)
+        tmp.close()
+        cli_result = cli_create_view(space_id, tmp.name)
+    finally:
+        os.unlink(tmp.name)
+
+    if "ERROR" in cli_result or "FAILED" in cli_result:
+        return {
+            "status": "error",
+            "original_name": normalized_name,
+            "backup_name": backup_name,
+            "message": f"CLI failed to persist backup.\n{cli_result}",
+        }
+
+    return {
         "status": "success",
         "original_name": normalized_name,
         "backup_name": backup_name,
+        "space_id": space_id,
+        "output": (
+            f"Backup created successfully: '{normalized_name}' → '{backup_name}' "
+            f"in space '{space_id}'"
+        ),
     }
-
-    if isinstance(original_csn, dict):
-        backup_csn = generate_backup_csn(normalized_name, original_csn, backup_name)
-        result["csn"] = backup_csn
-        result["output"] = f"Logical backup prepared for {normalized_name} as {backup_name}"
-        return result
-
-    result["output"] = f"Backup name prepared for {normalized_name}: {backup_name}"
-    return result
 
 
 register_skill("create_backup", execute)

@@ -30,6 +30,12 @@ INTENT_MAP: dict[str, list[list[str]]] = {
         ["share", "space"],           # "share to space"
         ["share", "object"],          # "share object"
     ],
+    "create_backup": [
+        ["backup", "view"],           # "backup view SV_SALES"
+        ["backup", "before"],         # "backup before modifying"
+        ["create", "backup"],         # "create backup for SV_SALES"
+        ["backup"],                   # "backup SV_SALES"
+    ],
 }
 
 

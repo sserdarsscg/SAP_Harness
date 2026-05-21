@@ -35,7 +35,6 @@ from skills.read_view import generate_read_sql            # noqa: E402
 from skills.create_view import generate_csn, csn_to_temp_file, _ensure_prefix  # noqa: E402
 from skills.share_to_space import build_share_csn, share_csn_to_temp_file  # noqa: E402
 from skills.create_association import build_association_extension  # noqa: E402
-from skills.create_backup import generate_backup_name, generate_backup_csn  # noqa: E402
 
 # Live CLI imports (no mock mode)
 from executors.datasphere_cli import (                   # noqa: E402
@@ -47,6 +46,7 @@ from executors.datasphere_cli import (                   # noqa: E402
     read_local_table as cli_read_local_table,
     read_view_raw as cli_read_view_raw,
     update_view as cli_update_view,
+    update_view_no_deploy as cli_update_view_no_deploy,
     list_dbusers,
 )
 
@@ -313,20 +313,22 @@ TOOLS = [
     {
         "name": "create_backup",
         "description": (
-            "Create a simple logical backup name for an existing Datasphere object "
-            "before modification. If an existing CSN is provided, prepares a copied "
-            "definition under the backup name without modifying the original."
+            "Create a backup copy of an existing Datasphere view before modification. "
+            "Reads the original view from Datasphere, generates a timestamped backup name, "
+            "and persists the backup as a new view in the same space. "
+            "Fails if the original does not exist or a backup with the same timestamp already exists."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "object_name": {
                     "type": "string",
-                    "description": "Object name to back up (e.g. TEST_VIEW or GV_TEST_VIEW).",
+                    "description": "Technical name of the existing view to back up (e.g. SV_SALES or SV_SALES_VIEW).",
                 },
-                "original_csn": {
-                    "type": "object",
-                    "description": "Optional: full CSN definition of the object to create a copy.",
+                "space_id": {
+                    "type": "string",
+                    "description": "Datasphere space containing the view (default: ZZ_BDC_HARNESS_1).",
+                    "default": "ZZ_BDC_HARNESS_1",
                 },
                 "confirm": {
                     "type": "boolean",
@@ -454,8 +456,8 @@ def _handle_create_view(arguments: dict) -> str:
 
 
 def _handle_share_to_space(arguments: dict) -> str:
-    """Share views to target spaces by adding @DataWarehouse.shareTo annotation."""
-    import json as _json
+    """Share views to target spaces. Auto-deploys if view is not yet deployed."""
+    import os
 
     view_names = arguments.get("view_names", [])
     target_spaces = arguments.get("target_spaces", [])
@@ -480,11 +482,28 @@ def _handle_share_to_space(arguments: dict) -> str:
         # 3. Write to temp file
         temp_path = share_csn_to_temp_file(updated_csn)
         try:
-            # 4. Update view via CLI
+            # 4. Try update + deploy (preferred path)
             output = cli_update_view(source_space, temp_path, vn)
-            results.append(f"Shared {vn} -> {target_spaces}: {output}")
+
+            if "FAILED" not in output:
+                results.append(f"Shared and deployed {vn} -> {target_spaces}: {output}")
+            else:
+                # 5. Deploy failed — fallback: save-only (no deploy)
+                log.warning("Deploy failed for %s, falling back to save-only", vn)
+                output_no_deploy = cli_update_view_no_deploy(source_space, temp_path, vn)
+
+                if "FAILED" not in output_no_deploy:
+                    results.append(
+                        f"PARTIAL: {vn} share annotation saved but NOT deployed. "
+                        f"Fix the view query and redeploy manually.\n{output_no_deploy}"
+                    )
+                else:
+                    results.append(
+                        f"ERROR: Could not share {vn}. Both deploy and save-only failed.\n"
+                        f"Deploy attempt:\n{output}\n"
+                        f"Save-only attempt:\n{output_no_deploy}"
+                    )
         finally:
-            import os
             os.unlink(temp_path)
 
     return "\n\n".join(results) if results else "No views processed."
@@ -525,36 +544,27 @@ def _handle_create_association(arguments: dict) -> str:
 
 
 def _handle_create_backup(arguments: dict) -> str:
-    """Create a logical backup name and optionally copy the CSN definition."""
-    import json as _json
+    """Create a backup copy of an existing view and persist it to Datasphere."""
+    from skills.create_backup import execute as backup_execute
 
     object_name = arguments.get("object_name")
-    original_csn = arguments.get("original_csn")
-
     if not object_name:
         return "ERROR: object_name is required"
 
-    log.info("Creating backup for %s", object_name)
-    backup_name = generate_backup_name(object_name)
+    space_id = arguments.get("space_id", "ZZ_BDC_HARNESS_1")
+    log.info("Creating backup for %s in space %s", object_name, space_id)
 
-    if original_csn and isinstance(original_csn, dict):
-        try:
-            backup_csn = generate_backup_csn(object_name, original_csn, backup_name)
-            csn_text = _json.dumps(backup_csn, indent=2)
-            return (
-                f"Backup created successfully\n"
-                f"Original name: {object_name}\n"
-                f"Backup name: {backup_name}\n"
-                f"Backup CSN:\n{csn_text}"
-            )
-        except ValueError as exc:
-            return f"ERROR: {exc}"
-    else:
-        return (
-            f"Backup name prepared\n"
-            f"Original name: {object_name}\n"
-            f"Backup name: {backup_name}"
-        )
+    result = backup_execute({"object_name": object_name, "space_id": space_id})
+
+    if result.get("status") == "error":
+        return f"ERROR: {result.get('message', 'Unknown error')}"
+
+    return (
+        f"Backup created successfully\n"
+        f"Original: {result['original_name']}\n"
+        f"Backup:   {result['backup_name']}\n"
+        f"Space:    {result['space_id']}"
+    )
 
 
 TOOL_HANDLERS = {
