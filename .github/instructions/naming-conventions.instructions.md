@@ -40,9 +40,9 @@ description: 'SAP Datasphere naming conventions. MUST be followed for ALL object
 | Transformation Flow | `TF_` | `TF_<NAME>` | `TF_SALES_CALC` |
 
 **Rules**:
-- Replication Flow: Bronze → ONLY inbound; Silver/Gold → ONLY outbound
-- Data Flow: No transformation logic allowed
-- Transformation Flow: Only internal (GV/SQL → Local Table)
+- Replication Flow: Bronze → ONLY inbound into Datasphere; Silver/Gold → ONLY outbound from Datasphere
+- Data Flow: No transformation logic allowed. Name should be descriptive of the source dataset being loaded (ELT paradigm)
+- Transformation Flow: Processes internal data only — between GV_ or SQL View to a Local Table
 
 ## Models & Views
 
@@ -54,8 +54,8 @@ description: 'SAP Datasphere naming conventions. MUST be followed for ALL object
 | Analytic Model | `AM_` | `AM_<NAME>` | Gold Reporting |
 
 **Rules**:
-- SQL Views: ONLY in Gold Propagation layer, for complex logic or performance
-- Graphical Views: For associations, hierarchies, semantic objects, aggregations
+- SQL Views: ONLY in Gold Propagation layer, even for simple cases. For complex calculations — aggregations on large datasets or KPIs that cannot be done with a Graphical View. Can be persisted for performance.
+- Graphical Views: For associations & hierarchies. To create semantic data objects (e.g. customer) from SAP tables where no CDS-view is available (Silver layer). For on-the-fly aggregations and KPI calculations (Gold layers).
 - Analytic Models: RKF, CKF, exception aggregation, consumed by reporting tools
 
 ## Orchestration & Security
@@ -65,6 +65,10 @@ description: 'SAP Datasphere naming conventions. MUST be followed for ALL object
 | Task Chain | `TC_` | `TC_<MD/TD>_<NAME>` | `TC_MD_SALES` |
 | Data Access Control | `DC_` | `DC_<NAME>` | `DC_REGION` |
 | Intelligent Lookup | `IL_` | `IL_<NAME>` | `IL_COUNTRY` |
+
+**Rules**:
+- Task Chain: Use `MD` for master data flows, `TD` for transactional data flows.
+- Intelligent Lookup: Used for harmonization of data across sources.
 
 ## Connections
 

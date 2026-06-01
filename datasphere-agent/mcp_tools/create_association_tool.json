@@ -1,0 +1,53 @@
+{
+  "name": "create_association",
+  "description": "Add a cds.Association element to an existing deployed view (SV_ or GV_) so it can navigate to a master data view. Fetches the source view CSN from Datasphere automatically — no need to supply the raw CSN. Returns a dry-run by default; set deploy=true to apply.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "source_view": {
+        "type": "string",
+        "description": "View to extend (e.g. SV_BILLING_DOC_JOINED)."
+      },
+      "target_view": {
+        "type": "string",
+        "description": "Association target view (e.g. SV_COMPANYCODE)."
+      },
+      "join_field_source": {
+        "type": "string",
+        "description": "Foreign key column on the source view (e.g. CompanyCode)."
+      },
+      "join_field_target": {
+        "type": "string",
+        "description": "Primary key column on the target view (e.g. Company_Code)."
+      },
+      "space_id": {
+        "type": "string",
+        "description": "Datasphere space containing both views.",
+        "default": "ZZ_BDC_HARNESS_1"
+      },
+      "deploy": {
+        "type": "boolean",
+        "description": "Set true to deploy after dry-run review. Requires confirm and acknowledge_ai.",
+        "default": false
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "Human confirmation flag. Must be true when deploy=true.",
+        "default": false
+      },
+      "acknowledge_ai": {
+        "type": "boolean",
+        "description": "AI literacy acknowledgement. Must be true when deploy=true.",
+        "default": false
+      }
+    },
+    "required": ["source_view", "target_view", "join_field_source", "join_field_target"]
+  },
+  "annotations": {
+    "title": "Create Association Navigation Property",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+  }
+}

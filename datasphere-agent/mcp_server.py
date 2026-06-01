@@ -35,6 +35,7 @@ from skills.read_view import generate_read_sql            # noqa: E402
 from skills.create_view import generate_csn, csn_to_temp_file, _ensure_prefix  # noqa: E402
 from skills.share_to_space import build_share_csn, share_csn_to_temp_file  # noqa: E402
 from skills.create_association import build_association_extension  # noqa: E402
+from skills.create_sql_view_with_association import build_sv_csn  # noqa: E402
 
 # Live CLI imports (no mock mode)
 from executors.datasphere_cli import (                   # noqa: E402
@@ -269,45 +270,123 @@ TOOLS = [
     {
         "name": "create_association",
         "description": (
-            "Add an association inside an existing Graphical View (GV) to link "
-            "a transaction view to a master data view. The association is defined "
-            "as a cds.Association element with target view and join condition."
+            "Add a cds.Association element to an existing deployed view (SV_ or GV_) "
+            "so it can navigate to a master data view. Fetches the source view CSN from "
+            "Datasphere automatically — no need to supply the raw CSN. "
+            "Returns a dry-run by default; set deploy=true to apply."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "source_view": {
                     "type": "string",
-                    "description": "Transaction view name (e.g. BILLING_TXN or GV_BILLING_TXN).",
+                    "description": "View to extend (e.g. SV_BILLING_DOC_JOINED).",
                 },
                 "target_view": {
                     "type": "string",
-                    "description": "Master data view name (e.g. CHART_OF_ACCOUNTS or GV_CHART_OF_ACCOUNTS).",
+                    "description": "Association target view (e.g. SV_COMPANYCODE).",
                 },
                 "join_field_source": {
                     "type": "string",
-                    "description": "Foreign key column on the source view side.",
+                    "description": "Foreign key column on the source view (e.g. CompanyCode).",
                 },
                 "join_field_target": {
                     "type": "string",
-                    "description": "Primary key column on the target view side.",
+                    "description": "Primary key column on the target view (e.g. CompanyCode).",
                 },
-                "existing_view_csn": {
-                    "type": "object",
-                    "description": "Full CSN definition of the source view (required to add the association element).",
+                "space_id": {
+                    "type": "string",
+                    "description": "Datasphere space containing both views.",
+                    "default": "ZZ_BDC_HARNESS_1",
+                },
+                "deploy": {
+                    "type": "boolean",
+                    "description": "Set true to deploy after dry-run review. Requires confirm and acknowledge_ai.",
+                    "default": False,
                 },
                 "confirm": {
                     "type": "boolean",
-                    "description": "Human confirmation flag. Must be true to execute mutating actions.",
+                    "description": "Human confirmation flag. Must be true when deploy=true.",
                     "default": False,
                 },
                 "acknowledge_ai": {
                     "type": "boolean",
-                    "description": "AI literacy acknowledgement. Must be true to confirm review of AI-generated output before execution.",
+                    "description": "AI literacy acknowledgement. Must be true when deploy=true.",
                     "default": False,
                 },
             },
-            "required": ["source_view", "target_view", "join_field_source", "join_field_target", "existing_view_csn"],
+            "required": ["source_view", "target_view", "join_field_source", "join_field_target"],
+        },
+    },
+    {
+        "name": "create_sql_view_with_association",
+        "description": (
+            "Skill 3: Create a SQL View (SV_) that INNER JOINs Billing Document Item "
+            "(VR1_BILLING_DOC_ITEM_TD_001) and Billing Document Header (VR1_BILLING_DOC_TD_001) "
+            "on BillingDocument, and defines a cds.Association on CompanyCode linking to "
+            "TL_COMPANYCODE master data. Returns a CSN dry-run by default. "
+            "Set deploy=true to create in Datasphere."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "view_name": {
+                    "type": "string",
+                    "description": "Technical name for the SQL view (must start with SV_).",
+                    "default": "SV_BILLING_DOC_JOINED",
+                },
+                "source_table_1": {
+                    "type": "string",
+                    "description": "First source table (Billing Document Item).",
+                    "default": "VR1_BILLING_DOC_ITEM_TD_001",
+                },
+                "source_table_2": {
+                    "type": "string",
+                    "description": "Second source table (Billing Document Header).",
+                    "default": "VR1_BILLING_DOC_TD_001",
+                },
+                "join_field": {
+                    "type": "string",
+                    "description": "Column used for the INNER JOIN between the two tables.",
+                    "default": "BillingDocument",
+                },
+                "association_field": {
+                    "type": "string",
+                    "description": "Column used as the cds.Association key (many-to-one).",
+                    "default": "CompanyCode",
+                },
+                "master_data_view": {
+                    "type": "string",
+                    "description": "Association target view (SV_ or GV_ view).",
+                    "default": "SV_COMPANYCODE",
+                },
+                "master_data_key": {
+                    "type": "string",
+                    "description": "Primary key field inside master_data_view (defaults to association_field if not set).",
+                    "default": "Company_Code",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "Datasphere space ID.",
+                    "default": "ZZ_BDC_HARNESS_1",
+                },
+                "deploy": {
+                    "type": "boolean",
+                    "description": "Set true to deploy after dry-run review. Requires confirm and acknowledge_ai.",
+                    "default": False,
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Human confirmation flag. Must be true when deploy=true.",
+                    "default": False,
+                },
+                "acknowledge_ai": {
+                    "type": "boolean",
+                    "description": "AI literacy acknowledgement. Must be true when deploy=true.",
+                    "default": False,
+                },
+            },
+            "required": [],
         },
     },
     {
@@ -510,36 +589,35 @@ def _handle_share_to_space(arguments: dict) -> str:
 
 
 def _handle_create_association(arguments: dict) -> str:
-    """Create an association inside an existing view."""
+    """Add a cds.Association to an existing deployed view (dry-run by default)."""
     import json as _json
+    from skills.create_association import execute as assoc_execute
 
-    source_view = arguments.get("source_view")
-    target_view = arguments.get("target_view")
-    join_field_source = arguments.get("join_field_source")
-    join_field_target = arguments.get("join_field_target")
-    existing_view_csn = arguments.get("existing_view_csn")
+    result = assoc_execute(arguments)
 
-    if not all([source_view, target_view, join_field_source, join_field_target, existing_view_csn]):
-        return "ERROR: all parameters are required"
+    if result["status"] == "error":
+        errors = result.get("errors", ["Unknown error"])
+        return "ERROR:\n" + "\n".join(f"  - {e}" for e in errors)
 
-    try:
-        log.info("Creating association: %s -> %s", source_view, target_view)
-        updated_csn, assoc_name, join_condition = build_association_extension(
-            existing_view_csn=existing_view_csn,
-            source_view=source_view,
-            target_view=target_view,
-            join_field_source=join_field_source,
-            join_field_target=join_field_target,
+    if result["status"] == "dry_run":
+        csn_pretty = _json.dumps(result["csn"], indent=2)
+        return (
+            f"DRY-RUN — association generated (not deployed)\n"
+            f"Source view:      {result['source_view']}\n"
+            f"Target view:      {result['target_view']}\n"
+            f"Association name: {result['association_name']}\n"
+            f"Space:            {result['space_id']}\n\n"
+            f"CSN:\n{csn_pretty}\n\n"
+            f"Next step: {result['next_step']}"
         )
-    except ValueError as exc:
-        return f"ERROR: {exc}"
 
-    csn_text = _json.dumps(updated_csn, indent=2)
     return (
-        f"Association created successfully\n"
-        f"Association name: {assoc_name}\n"
-        f"Join condition: {_json.dumps(join_condition, indent=2)}\n"
-        f"Updated CSN:\n{csn_text}"
+        f"DEPLOYED\n"
+        f"Source view:      {result['source_view']}\n"
+        f"Target view:      {result['target_view']}\n"
+        f"Association name: {result['association_name']}\n"
+        f"Space:            {result['space_id']}\n"
+        f"Output:           {result['cli_output']}"
     )
 
 
@@ -567,6 +645,41 @@ def _handle_create_backup(arguments: dict) -> str:
     )
 
 
+def _handle_create_sql_view_with_association(arguments: dict) -> str:
+    """Skill 3: INNER JOIN billing tables + cds.Association on CompanyCode (dry-run by default)."""
+    import json as _json
+    from skills.create_sql_view_with_association import execute as skill3_execute
+
+    result = skill3_execute(arguments)
+
+    if result["status"] == "error":
+        errors = result.get("errors", ["Unknown error"])
+        return "ERROR:\n" + "\n".join(f"  - {e}" for e in errors)
+
+    if result["status"] == "dry_run":
+        csn_pretty = _json.dumps(result["csn"], indent=2)
+        return (
+            f"DRY-RUN — CSN generated (not deployed)\n"
+            f"View:              {result['view_name']}\n"
+            f"Table 1:           {result['source_table_1']}\n"
+            f"Table 2:           {result['source_table_2']}\n"
+            f"Join field:        {result['join_field']}\n"
+            f"Association field: {result['association_field']}\n"
+            f"Master data view:  {result['master_data_view']}\n"
+            f"Space:             {result['space_id']}\n\n"
+            f"CSN:\n{csn_pretty}\n\n"
+            f"Next step: {result['next_step']}"
+        )
+
+    # Deployed
+    return (
+        f"DEPLOYED\n"
+        f"View:    {result['view_name']}\n"
+        f"Space:   {result['space_id']}\n"
+        f"Output:  {result['cli_output']}"
+    )
+
+
 TOOL_HANDLERS = {
     "bronze_to_silver": _handle_bronze_to_silver,
     "read_view": _handle_read_view,
@@ -577,6 +690,7 @@ TOOL_HANDLERS = {
     "share_to_space": _handle_share_to_space,
     "create_association": _handle_create_association,
     "create_backup": _handle_create_backup,
+    "create_sql_view_with_association": _handle_create_sql_view_with_association,
 }
 
 # ---------------------------------------------------------------------------

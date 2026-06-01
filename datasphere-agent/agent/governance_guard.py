@@ -24,6 +24,7 @@ MUTATING_SKILLS = {
     "share_to_space",
     "create_association",
     "create_backup",
+    "create_sql_view_with_association",
 }
 
 # Space rules can be extended for future skills without changing call sites.
@@ -31,6 +32,7 @@ SKILL_SPACE_RULES = {
     "create_view": {"space_id": {SPACE_BRONZE}},
     "create_association": {"space_id": {SPACE_BRONZE}},
     "create_backup": {"space_id": {SPACE_BRONZE}},
+    "create_sql_view_with_association": {"space_id": {SPACE_BRONZE}},
     "share_to_space": {
         "source_space": {SPACE_BRONZE},
         "target_spaces": {SPACE_CONSUMPTION},

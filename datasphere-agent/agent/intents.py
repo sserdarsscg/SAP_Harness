@@ -36,6 +36,17 @@ INTENT_MAP: dict[str, list[list[str]]] = {
         ["create", "backup"],         # "create backup for SV_SALES"
         ["backup"],                   # "backup SV_SALES"
     ],
+    "create_sql_view_with_association": [
+        ["sql", "view", "association"],     # "create sql view with association"
+        ["billing", "association"],         # "billing document association"
+        ["sv_", "billingdocument"],         # "sv_ billingdocument"
+        ["sql view", "companycode"],        # "sql view companycode"
+    ],
+    "create_association": [
+        ["create", "association"],          # "create an association"
+        ["add", "association"],             # "add association to view"
+        ["association", "navigation"],     # "association navigation link"
+    ],
 }
 
 

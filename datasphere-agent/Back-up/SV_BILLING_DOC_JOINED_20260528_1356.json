@@ -1,0 +1,282 @@
+{
+  "definitions": {
+    "SV_BILLING_DOC_JOINED": {
+      "kind": "entity",
+      "@EndUserText.label": "Billing Document Joined View",
+      "@Analytics.dataCategory": "#FACT",
+      "query": {
+        "SELECT": {
+          "from": {
+            "join": "inner",
+            "args": [
+              {
+                "ref": [
+                  "VR1_BILLING_DOC_ITEM_TD_001"
+                ]
+              },
+              {
+                "ref": [
+                  "VR1_BILLING_DOC_TD_001"
+                ]
+              }
+            ],
+            "on": [
+              {
+                "ref": [
+                  "VR1_BILLING_DOC_ITEM_TD_001",
+                  "BillingDocument"
+                ]
+              },
+              "=",
+              {
+                "ref": [
+                  "VR1_BILLING_DOC_TD_001",
+                  "BillingDocument"
+                ]
+              }
+            ]
+          },
+          "columns": [
+            {
+              "ref": [
+                "VR1_BILLING_DOC_ITEM_TD_001",
+                "BillingDocument"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_ITEM_TD_001",
+                "BillingDocumentItem"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_ITEM_TD_001",
+                "Material"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_ITEM_TD_001",
+                "NetAmount"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_ITEM_TD_001",
+                "TaxAmount"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_ITEM_TD_001",
+                "ProfitCenter"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_ITEM_TD_001",
+                "BillingQuantity"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_ITEM_TD_001",
+                "BaseUnit"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "BillingDocumentDate"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "TransactionCurrency"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "CompanyCode"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "FiscalYear"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "AccountingDocument"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "FiscalPeriod"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "SoldToParty"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "ForeignTradeStstclCurrency"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "BillingDocumentType"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "SalesOrganization"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "DistributionChannel"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "Division"
+              ]
+            },
+            {
+              "ref": [
+                "VR1_BILLING_DOC_TD_001",
+                "CustomerGroup"
+              ]
+            }
+          ]
+        }
+      },
+      "elements": {
+        "BillingDocument": {
+          "type": "cds.String",
+          "key": true,
+          "length": 10,
+          "@EndUserText.label": "BillingDocument"
+        },
+        "BillingDocumentItem": {
+          "type": "cds.String",
+          "key": true,
+          "length": 6,
+          "@EndUserText.label": "BillingDocumentItem"
+        },
+        "Material": {
+          "type": "cds.String",
+          "length": 40,
+          "@EndUserText.label": "Material"
+        },
+        "NetAmount": {
+          "type": "cds.Decimal",
+          "precision": 34,
+          "scale": 4,
+          "@EndUserText.label": "NetAmount"
+        },
+        "TaxAmount": {
+          "type": "cds.Decimal",
+          "precision": 34,
+          "scale": 4,
+          "@EndUserText.label": "TaxAmount"
+        },
+        "ProfitCenter": {
+          "type": "cds.String",
+          "length": 10,
+          "@EndUserText.label": "ProfitCenter"
+        },
+        "BillingQuantity": {
+          "type": "cds.Decimal",
+          "precision": 13,
+          "scale": 3,
+          "@EndUserText.label": "BillingQuantity"
+        },
+        "BaseUnit": {
+          "type": "cds.String",
+          "length": 3,
+          "@EndUserText.label": "BaseUnit"
+        },
+        "BillingDocumentDate": {
+          "type": "cds.Date",
+          "@EndUserText.label": "BillingDocumentDate"
+        },
+        "TransactionCurrency": {
+          "type": "cds.String",
+          "length": 5,
+          "@EndUserText.label": "TransactionCurrency"
+        },
+        "CompanyCode": {
+          "type": "cds.String",
+          "length": 4,
+          "@EndUserText.label": "CompanyCode"
+        },
+        "FiscalYear": {
+          "type": "cds.String",
+          "length": 4,
+          "@EndUserText.label": "FiscalYear"
+        },
+        "AccountingDocument": {
+          "type": "cds.String",
+          "length": 10,
+          "@EndUserText.label": "AccountingDocument"
+        },
+        "FiscalPeriod": {
+          "type": "cds.String",
+          "length": 3,
+          "@EndUserText.label": "FiscalPeriod"
+        },
+        "SoldToParty": {
+          "type": "cds.String",
+          "length": 10,
+          "@EndUserText.label": "SoldToParty"
+        },
+        "ForeignTradeStstclCurrency": {
+          "type": "cds.String",
+          "length": 5,
+          "@EndUserText.label": "ForeignTradeStstclCurrency"
+        },
+        "BillingDocumentType": {
+          "type": "cds.String",
+          "length": 4,
+          "@EndUserText.label": "BillingDocumentType"
+        },
+        "SalesOrganization": {
+          "type": "cds.String",
+          "length": 4,
+          "@EndUserText.label": "SalesOrganization"
+        },
+        "DistributionChannel": {
+          "type": "cds.String",
+          "length": 2,
+          "@EndUserText.label": "DistributionChannel"
+        },
+        "Division": {
+          "type": "cds.String",
+          "length": 2,
+          "@EndUserText.label": "Division"
+        },
+        "CustomerGroup": {
+          "type": "cds.String",
+          "length": 2,
+          "@EndUserText.label": "CustomerGroup"
+        }
+      }
+    }
+  }
+}

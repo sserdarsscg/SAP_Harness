@@ -1,0 +1,72 @@
+{
+  "name": "create_sql_view_with_association",
+  "description": "Skill 3: Create a SQL View (SV_) that INNER JOINs Billing Document Item (VR1_BILLING_DOC_ITEM_TD_001) and Billing Document Header (VR1_BILLING_DOC_TD_001) on BillingDocument, and defines a cds.Association on CompanyCode linking to SV_COMPANYCODE master data. Returns a CSN dry-run by default. Set deploy=true to create in Datasphere.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "view_name": {
+        "type": "string",
+        "description": "Technical name for the SQL view (must start with SV_).",
+        "default": "SV_BILLING_DOC_JOINED"
+      },
+      "source_table_1": {
+        "type": "string",
+        "description": "First source table (Billing Document Item).",
+        "default": "VR1_BILLING_DOC_ITEM_TD_001"
+      },
+      "source_table_2": {
+        "type": "string",
+        "description": "Second source table (Billing Document Header).",
+        "default": "VR1_BILLING_DOC_TD_001"
+      },
+      "join_field": {
+        "type": "string",
+        "description": "Column used for the INNER JOIN between the two tables.",
+        "default": "BillingDocument"
+      },
+      "association_field": {
+        "type": "string",
+        "description": "Column used as the cds.Association key (many-to-one).",
+        "default": "CompanyCode"
+      },
+      "master_data_view": {
+        "type": "string",
+        "description": "Association target view (SV_ or GV_ view).",
+        "default": "SV_COMPANYCODE"
+      },
+      "master_data_key": {
+        "type": "string",
+        "description": "Primary key field inside master_data_view.",
+        "default": "Company_Code"
+      },
+      "space_id": {
+        "type": "string",
+        "description": "Datasphere space ID.",
+        "default": "ZZ_BDC_HARNESS_1"
+      },
+      "deploy": {
+        "type": "boolean",
+        "description": "Set true to deploy after dry-run review. Requires confirm and acknowledge_ai.",
+        "default": false
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "Human confirmation flag. Must be true when deploy=true.",
+        "default": false
+      },
+      "acknowledge_ai": {
+        "type": "boolean",
+        "description": "AI literacy acknowledgement. Must be true when deploy=true.",
+        "default": false
+      }
+    },
+    "required": []
+  },
+  "annotations": {
+    "title": "Create SQL View with Association (Skill 3)",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+  }
+}
