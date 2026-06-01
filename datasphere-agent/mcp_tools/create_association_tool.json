@@ -1,6 +1,6 @@
 {
   "name": "create_association",
-  "description": "Add a cds.Association element to an existing deployed view (SV_ or GV_) so it can navigate to a master data view. Fetches the source view CSN from Datasphere automatically — no need to supply the raw CSN. Returns a dry-run by default; set deploy=true to apply.",
+  "description": "Add a cds.Association to an existing deployed view (SV_ or GV_) so it can navigate to a master-data view. Implements the four-step CSN protocol: (1) @ObjectModel.foreignKey.association on the FK field, (2) association element in elements with bare refs, (3) association ref in query.SELECT.columns, (4) association in query.SELECT.mixin with $projection refs. Supports both single-key and compound-key targets. Fetches source view CSN automatically. Returns a dry-run by default; set deploy=true to apply.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -10,15 +10,37 @@
       },
       "target_view": {
         "type": "string",
-        "description": "Association target view (e.g. SV_COMPANYCODE)."
+        "description": "Association target view technical name (e.g. V_I_COMPANYCODE). The association element name is derived as '_' + first 9 chars of this name."
+      },
+      "join_fields": {
+        "type": "array",
+        "description": "Join field pairs for the association. Use one entry for single-key targets; use multiple entries (in key order) for compound-key targets. Overrides join_field_source / join_field_target when provided.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "source_field": {
+              "type": "string",
+              "description": "Foreign key column on the source view (e.g. CompanyCode)."
+            },
+            "target_field": {
+              "type": "string",
+              "description": "Matching primary key column on the target view (e.g. CompanyCode)."
+            }
+          },
+          "required": ["source_field", "target_field"]
+        }
       },
       "join_field_source": {
         "type": "string",
-        "description": "Foreign key column on the source view (e.g. CompanyCode)."
+        "description": "Shorthand for single-key: foreign key column on the source view. Ignored when join_fields is provided."
       },
       "join_field_target": {
         "type": "string",
-        "description": "Primary key column on the target view (e.g. Company_Code)."
+        "description": "Shorthand for single-key: primary key column on the target view. Ignored when join_fields is provided."
+      },
+      "target_label": {
+        "type": "string",
+        "description": "Human-readable label of the target view used in the association @EndUserText.label (e.g. 'Company code'). Defaults to the target_view technical name if omitted."
       },
       "space_id": {
         "type": "string",
@@ -41,7 +63,7 @@
         "default": false
       }
     },
-    "required": ["source_view", "target_view", "join_field_source", "join_field_target"]
+    "required": ["source_view", "target_view"]
   },
   "annotations": {
     "title": "Create Association Navigation Property",
