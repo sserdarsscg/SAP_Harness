@@ -36,6 +36,7 @@ from skills.create_view import generate_csn, csn_to_temp_file, _ensure_prefix  #
 from skills.share_to_space import build_share_csn, share_csn_to_temp_file  # noqa: E402
 from skills.create_association import build_association_extension  # noqa: E402
 from skills.create_sql_view_with_association import build_sv_csn  # noqa: E402
+from skills.add_calculated_fields import inject_calculated_fields  # noqa: E402
 
 # Live CLI imports (no mock mode)
 from executors.datasphere_cli import (                   # noqa: E402
@@ -390,6 +391,49 @@ TOOLS = [
         },
     },
     {
+        "name": "add_calculated_fields",
+        "description": (
+            "Skill 4: Add two calculated columns to an existing SQL view (SV_) in SAP Datasphere. "
+            "GrossAmount = NetAmount + TaxAmount (cds.Decimal 34,4). "
+            "QuantityCategory = CASE WHEN BillingQuantity > 100 THEN 'High' "
+            "WHEN BillingQuantity > 10 THEN 'Medium' ELSE 'Low' END (cds.String 6). "
+            "Reads the live view CSN from Datasphere, injects the expressions, "
+            "and updates the view. Returns a dry-run by default. "
+            "Set deploy=true to apply."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "view_name": {
+                    "type": "string",
+                    "description": "Technical name of the SQL view to extend (must start with SV_).",
+                    "default": "SV_BILLING_DOC_JOINED",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "Datasphere space ID containing the view.",
+                    "default": "ZZ_BDC_HARNESS_1",
+                },
+                "deploy": {
+                    "type": "boolean",
+                    "description": "Set true to deploy after dry-run review. Requires confirm and acknowledge_ai.",
+                    "default": False,
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Human confirmation flag. Must be true when deploy=true.",
+                    "default": False,
+                },
+                "acknowledge_ai": {
+                    "type": "boolean",
+                    "description": "AI literacy acknowledgement. Must be true when deploy=true.",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "create_backup",
         "description": (
             "Create a backup copy of an existing Datasphere view before modification. "
@@ -680,6 +724,48 @@ def _handle_create_sql_view_with_association(arguments: dict) -> str:
     )
 
 
+def _handle_add_calculated_fields(arguments: dict) -> str:
+    """Skill 4: Add GrossAmount and QuantityCategory calculated columns to an SV_ view."""
+    import json as _json
+    from skills.add_calculated_fields import execute as skill4_execute
+
+    result = skill4_execute(arguments)
+
+    if result["status"] == "error":
+        errors = result.get("errors", ["Unknown error"])
+        return "ERROR:\n" + "\n".join(f"  - {e}" for e in errors)
+
+    if result["status"] == "already_applied":
+        return (
+            f"ALREADY APPLIED\n"
+            f"View:    {result['view_name']}\n"
+            f"Space:   {result['space_id']}\n"
+            f"Message: {result['message']}"
+        )
+
+    if result["status"] == "dry_run":
+        csn_pretty = _json.dumps(result["csn"], indent=2)
+        return (
+            f"DRY-RUN — calculated fields generated (not deployed)\n"
+            f"View:  {result['view_name']}\n"
+            f"Space: {result['space_id']}\n\n"
+            f"Added columns:\n"
+            f"  - GrossAmount       (cds.Decimal 34,4) = NetAmount + TaxAmount\n"
+            f"  - QuantityCategory  (cds.String 6)     = CASE WHEN BillingQuantity > 100 THEN 'High'\n"
+            f"                                                WHEN BillingQuantity > 10  THEN 'Medium'\n"
+            f"                                                ELSE 'Low' END\n\n"
+            f"CSN:\n{csn_pretty}\n\n"
+            f"Next step: {result['next_step']}"
+        )
+
+    return (
+        f"DEPLOYED\n"
+        f"View:    {result['view_name']}\n"
+        f"Space:   {result['space_id']}\n"
+        f"Output:  {result['cli_output']}"
+    )
+
+
 TOOL_HANDLERS = {
     "bronze_to_silver": _handle_bronze_to_silver,
     "read_view": _handle_read_view,
@@ -691,6 +777,7 @@ TOOL_HANDLERS = {
     "create_association": _handle_create_association,
     "create_backup": _handle_create_backup,
     "create_sql_view_with_association": _handle_create_sql_view_with_association,
+    "add_calculated_fields": _handle_add_calculated_fields,
 }
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,14 @@ INTENT_MAP: dict[str, list[list[str]]] = {
         ["add", "association"],             # "add association to view"
         ["association", "navigation"],     # "association navigation link"
     ],
+    "add_calculated_fields": [
+        ["calculated", "field"],            # "add calculated field"
+        ["calculated", "column"],           # "calculated column"
+        ["gross", "amount"],                # "gross amount"
+        ["quantity", "category"],           # "quantity category"
+        ["add", "formula"],                 # "add formula to view"
+        ["netamount", "taxamount"],         # direct field reference
+    ],
 }
 
 
