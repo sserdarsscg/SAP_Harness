@@ -98,6 +98,30 @@ def _build_quantity_category_column(ref_map: dict[str, list]) -> dict:
     }
 
 
+def _patch_sql_editor_query(sql: str, item_alias: str) -> str:
+    """Inject GrossAmount and QuantityCategory into @DataWarehouse.sqlEditor.query.
+
+    The Datasphere UI SQL editor renders this annotation string, NOT the CSN xpr
+    column nodes. Both representations must be updated so the UI shows the logic.
+
+    Inserts the two SQL expressions immediately before the \\nFROM clause.
+    Is idempotent: if 'GrossAmount' is already present the string is returned unchanged.
+    """
+    if not item_alias or "GrossAmount" in sql:
+        return sql
+    new_cols = (
+        f',\n  "{item_alias}"."NetAmount" + "{item_alias}"."TaxAmount" AS "GrossAmount"'
+        f',\n  CASE WHEN "{item_alias}"."BillingQuantity" > 100 THEN \'High\''
+        f' WHEN "{item_alias}"."BillingQuantity" > 10 THEN \'Medium\''
+        f' ELSE \'Low\' END AS "QuantityCategory"'
+    )
+    from_idx = sql.find('\nFROM ')
+    if from_idx == -1:
+        log.warning("Could not find \\nFROM in sqlEditor.query; SQL annotation not patched")
+        return sql
+    return sql[:from_idx] + new_cols + sql[from_idx:]
+
+
 # ---------------------------------------------------------------------------
 # Public generator (used by tests and mcp_server directly)
 # ---------------------------------------------------------------------------
@@ -147,6 +171,15 @@ def inject_calculated_fields(existing_csn: dict, view_name: str) -> dict:
             "@EndUserText.label": "Quantity Category",
         }
         log.debug("Injected QuantityCategory column")
+
+    # Patch @DataWarehouse.sqlEditor.query – the SQL string the UI editor displays.
+    # This annotation is separate from the CSN xpr nodes and must be updated
+    # independently; otherwise the UI shows the old SQL without the new columns.
+    sql_key = "@DataWarehouse.sqlEditor.query"
+    if sql_key in view_def:
+        item_alias = (ref_map.get("NETAMOUNT") or [""])[0]
+        view_def[sql_key] = _patch_sql_editor_query(view_def[sql_key], item_alias)
+        log.debug("Patched sqlEditor.query with item alias '%s'", item_alias)
 
     return existing_csn
 
@@ -223,7 +256,14 @@ def execute(params: dict) -> dict:
     already_gross = "GrossAmount" in existing_elements
     already_qty_cat = "QuantityCategory" in existing_elements
 
-    if already_gross and already_qty_cat:
+    # Also check if the UI SQL annotation already has the columns.
+    # If elements are present but the SQL string is missing them, we still need
+    # to re-deploy so the Datasphere UI SQL editor shows the correct expressions.
+    sql_key = "@DataWarehouse.sqlEditor.query"
+    existing_sql = definitions[view_name].get(sql_key, "")
+    sql_already_patched = "GrossAmount" in existing_sql
+
+    if already_gross and already_qty_cat and sql_already_patched:
         return {
             "status": "already_applied",
             "view_name": view_name,
