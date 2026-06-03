@@ -122,6 +122,65 @@ def _patch_sql_editor_query(sql: str, item_alias: str) -> str:
     return sql[:from_idx] + new_cols + sql[from_idx:]
 
 
+def _expand_case_expression(col: str) -> str:
+    """Expand a single-line CASE ... END expression to multi-line indented form.
+
+    E.g.::
+
+        CASE WHEN "x" > 100 THEN 'High' WHEN "x" > 10 THEN 'Medium' ELSE 'Low' END AS "Y"
+
+    becomes::
+
+        CASE
+            WHEN "x" > 100 THEN 'High'
+            WHEN "x" > 10 THEN 'Medium'
+            ELSE 'Low'
+          END AS "Y"
+
+    Non-CASE expressions and already-multiline expressions are returned unchanged.
+    """
+    if "CASE " not in col.upper() or "\n" in col:
+        return col
+    result = col
+    result = result.replace(" WHEN ", "\n    WHEN ")
+    result = result.replace(" ELSE ", "\n    ELSE ")
+    result = result.replace(" END ", "\n  END ")
+    # Handle END at end-of-string (no alias after it)
+    if result.rstrip().endswith(" END"):
+        result = result.rstrip()[:-4] + "\n  END"
+    return result
+
+
+def _format_sql_select(sql: str) -> str:
+    """Reformat the full SELECT ... FROM SQL string for readability.
+
+    - Ensures every SELECT column sits on its own 2-space-indented line.
+    - Expands single-line CASE expressions to multi-line form.
+    - Safe to call on an already-formatted string (idempotent for multiline columns).
+    """
+    from_idx = sql.find("\nFROM ")
+    if from_idx == -1:
+        return sql
+
+    select_part = sql[:from_idx]   # Everything before \nFROM
+    from_part = sql[from_idx:]     # \nFROM (...)
+
+    if not select_part.startswith("SELECT\n"):
+        return sql
+
+    # Split on ",\n" to get individual column expressions.
+    # Safe because the CASE values ('High', 'Medium', 'Low') contain no commas.
+    raw_cols = select_part[len("SELECT\n"):]
+    columns = [c.strip() for c in raw_cols.split(",\n") if c.strip()]
+
+    formatted = []
+    for col in columns:
+        col = _expand_case_expression(col)
+        formatted.append("  " + col)
+
+    return "SELECT\n" + ",\n".join(formatted) + from_part
+
+
 # ---------------------------------------------------------------------------
 # Public generator (used by tests and mcp_server directly)
 # ---------------------------------------------------------------------------
@@ -178,8 +237,9 @@ def inject_calculated_fields(existing_csn: dict, view_name: str) -> dict:
     sql_key = "@DataWarehouse.sqlEditor.query"
     if sql_key in view_def:
         item_alias = (ref_map.get("NETAMOUNT") or [""])[0]
-        view_def[sql_key] = _patch_sql_editor_query(view_def[sql_key], item_alias)
-        log.debug("Patched sqlEditor.query with item alias '%s'", item_alias)
+        patched = _patch_sql_editor_query(view_def[sql_key], item_alias)
+        view_def[sql_key] = _format_sql_select(patched)
+        log.debug("Patched and formatted sqlEditor.query with item alias '%s'", item_alias)
 
     return existing_csn
 
@@ -261,7 +321,8 @@ def execute(params: dict) -> dict:
     # to re-deploy so the Datasphere UI SQL editor shows the correct expressions.
     sql_key = "@DataWarehouse.sqlEditor.query"
     existing_sql = definitions[view_name].get(sql_key, "")
-    sql_already_patched = "GrossAmount" in existing_sql
+    # Both columns must be present AND the CASE must already be multi-line (formatted).
+    sql_already_patched = "GrossAmount" in existing_sql and "\n    WHEN" in existing_sql
 
     if already_gross and already_qty_cat and sql_already_patched:
         return {
