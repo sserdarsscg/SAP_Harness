@@ -47,6 +47,13 @@ INTENT_MAP: dict[str, list[list[str]]] = {
         ["add", "association"],             # "add association to view"
         ["association", "navigation"],     # "association navigation link"
     ],
+    "create_transformation_flow": [
+        ["transformation flow"],                        # "create transformation flow"
+        ["create", "tf_"],                              # "create TF_BILLING"
+        ["aggregated", "flow"],                         # "aggregated flow on billing"
+        ["transformation flow", "billing"],             # domain-specific
+        ["without", "billing document", "aggregated"],  # matches user phrasing
+    ],
     "add_calculated_fields": [
         ["calculated", "field"],            # "add calculated field"
         ["calculated", "column"],           # "calculated column"

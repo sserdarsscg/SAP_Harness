@@ -1,6 +1,88 @@
 {
-  "name": "add_calculated_fields",
-  "description": "Skill 4: Add two calculated columns to an existing SQL view (SV_) in SAP Datasphere. GrossAmount = NetAmount + TaxAmount (cds.Decimal 34,4). QuantityCategory = CASE WHEN BillingQuantity > 100 THEN 'High' WHEN BillingQuantity > 10 THEN 'Medium' ELSE 'Low' END (cds.String 6). Reads the live view CSN from Datasphere, injects the xpr expressions, and updates the view. Returns a dry-run by default. Set deploy=true to apply.",
+  "name": "add_columns",
+  "description": "Skill 5: Add calculated and/or restricted columns to any SQL view (SV_) in SAP Datasphere. Calculated columns: arithmetic or CASE-with-ELSE expressions (e.g. NetAmount + TaxAmount). Restricted columns: CASE-WHEN without ELSE — result is NULL when condition not met. Accepts any view name, any column names, and any SQL expressions. Reads the live CSN, injects xpr definitions, and deploys. Dry-run by default. Set deploy=true to apply.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "view_name": {
+        "type": "string",
+        "description": "Technical name of the SQL view to extend (must start with SV_).",
+        "default": "SV_BILLING_DOC_JOINED"
+      },
+      "space_id": {
+        "type": "string",
+        "description": "Datasphere space ID. Available: ZZ_BDC_HARNESS_1, ZZ_BDC_HARNESS_2.",
+        "default": "ZZ_BDC_HARNESS_1"
+      },
+      "columns": {
+        "type": "array",
+        "description": "List of columns to add. Each item defines one calculated or restricted column.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name":        { "type": "string", "description": "Column technical name." },
+            "label":       { "type": "string", "description": "UI display label." },
+            "column_type": { "type": "string", "enum": ["calculated", "restricted"], "description": "calculated = arithmetic/CASE with ELSE. restricted = CASE WHEN without ELSE." },
+            "data_type":   { "type": "string", "description": "CDS type: cds.Decimal, cds.String, cds.Integer, etc.", "default": "cds.Decimal" },
+            "precision":   { "type": "integer", "description": "Precision for cds.Decimal.", "default": 34 },
+            "scale":       { "type": "integer", "description": "Scale for cds.Decimal.", "default": 4 },
+            "length":      { "type": "integer", "description": "Length for cds.String." },
+            "expression":  { "type": "string", "description": "SQL expression. Arithmetic: 'NetAmount + TaxAmount'. CASE: 'CASE WHEN BillingDocumentType = \\'F2\\' THEN NetAmount END'." }
+          },
+          "required": ["name", "expression", "column_type"]
+        }
+      },
+      "deploy": {
+        "type": "boolean",
+        "description": "Set true to deploy after dry-run review. Requires confirm and acknowledge_ai.",
+        "default": false
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "Human confirmation flag. Must be true when deploy=true.",
+        "default": false
+      },
+      "acknowledge_ai": {
+        "type": "boolean",
+        "description": "AI literacy acknowledgement. Must be true when deploy=true.",
+        "default": false
+      }
+    },
+    "required": ["columns"]
+  },
+  "examples": [
+    {
+      "description": "Add calculated column: GrossAmount = NetAmount + TaxAmount",
+      "arguments": {
+        "view_name": "SV_BILLING_DOC_JOINED",
+        "columns": [{"name": "GrossAmount", "label": "Gross Amount", "column_type": "calculated", "data_type": "cds.Decimal", "precision": 34, "scale": 4, "expression": "NetAmount + TaxAmount"}],
+        "deploy": false
+      }
+    },
+    {
+      "description": "Add restricted column: InvoiceRevenue = NetAmount only for F2 billing type",
+      "arguments": {
+        "view_name": "SV_BILLING_DOC_JOINED",
+        "columns": [{"name": "InvoiceRevenue", "label": "Invoice Revenue", "column_type": "restricted", "data_type": "cds.Decimal", "precision": 34, "scale": 4, "expression": "CASE WHEN BillingDocumentType = 'F2' THEN NetAmount END"}],
+        "deploy": false
+      }
+    },
+    {
+      "description": "Add multiple columns at once and deploy",
+      "arguments": {
+        "view_name": "SV_BILLING_DOC_JOINED",
+        "columns": [
+          {"name": "GrossAmount",     "column_type": "calculated", "data_type": "cds.Decimal", "precision": 34, "scale": 4, "expression": "NetAmount + TaxAmount"},
+          {"name": "InvoiceRevenue",  "column_type": "restricted", "data_type": "cds.Decimal", "precision": 34, "scale": 4, "expression": "CASE WHEN BillingDocumentType = 'F2' THEN NetAmount END"},
+          {"name": "HighValueRevenue","column_type": "restricted", "data_type": "cds.Decimal", "precision": 34, "scale": 4, "expression": "CASE WHEN NetAmount > 10000 THEN NetAmount END"}
+        ],
+        "deploy": true,
+        "confirm": true,
+        "acknowledge_ai": true
+      }
+    }
+  ]
+}
   "inputSchema": {
     "type": "object",
     "properties": {

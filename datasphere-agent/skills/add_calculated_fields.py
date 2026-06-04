@@ -1,19 +1,18 @@
-"""Skill 4: add_calculated_fields
+"""Skill 5: add_columns
 
-Adds two calculated columns to an existing SQL view (SV_) in SAP Datasphere
-by reading the live CSN, injecting xpr column definitions, and updating the view.
+Generic engine to add calculated and restricted columns to an existing SQL
+view (SV_) in SAP Datasphere.
 
-Calculated fields:
-  - GrossAmount       = NetAmount + TaxAmount          (cds.Decimal 34,4)
-  - QuantityCategory  = CASE WHEN BillingQuantity > 100 THEN 'High'
-                             WHEN BillingQuantity > 10  THEN 'Medium'
-                             ELSE 'Low' END             (cds.String 6)
+Column types:
+  - calculated : arithmetic or CASE-with-ELSE expression
+  - restricted : CASE-WHEN-without-ELSE (implicit NULL = restricted measure)
 
-The skill reads the current deployed view CSN from Datasphere so that
-table-qualified column refs (e.g. ["VR1_BILLING_DOC_ITEM_TD_001","NetAmount"])
-are preserved exactly as the platform expects.
+Expressions are supplied as SQL strings by the caller (GitHub Copilot translates
+the user's natural language into the structured column specs). This module parses
+the expression strings into CSN xpr lists and resolves column refs against the
+live view's SELECT list so that table-qualified refs are preserved exactly.
 
-Defaults to a dry-run. Set deploy=True (plus confirm=True and acknowledge_ai=True)
+Defaults to a dry-run. Set deploy=True (plus confirm=True, acknowledge_ai=True)
 to push the updated CSN to Datasphere.
 
 Governance is enforced at the MCP handler layer via governance_guard.
@@ -24,21 +23,23 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
+from typing import Any
 
 from agent.skill_registry import register_skill
 
-log = logging.getLogger("skill-4")
+log = logging.getLogger("skill-5")
 
 DEFAULT_VIEW_NAME = "SV_BILLING_DOC_JOINED"
 DEFAULT_SPACE = "ZZ_BDC_HARNESS_1"
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Ref-map builder
 # ---------------------------------------------------------------------------
 
 def _build_qualified_ref_map(columns: list) -> dict[str, list]:
-    """Scan SELECT.columns and map column name (uppercase) → ref list.
+    """Scan SELECT.columns and map column name (uppercase) -> ref list.
 
     Handles both table-qualified refs   ["TABLE", "COLUMN"]
     and unqualified refs                ["COLUMN"].
@@ -52,151 +53,222 @@ def _build_qualified_ref_map(columns: list) -> dict[str, list]:
         if not ref:
             continue
         if len(ref) == 2:
-            # table-qualified: ["TABLE", "COLUMN"]
             ref_map[ref[1].upper()] = ref
         elif len(ref) == 1:
-            # unqualified: ["COLUMN"]
             ref_map[ref[0].upper()] = ref
     return ref_map
 
 
-def _build_gross_amount_column(ref_map: dict[str, list]) -> dict:
-    """Return CSN xpr dict for NetAmount + TaxAmount aliased as GrossAmount."""
-    net_ref = ref_map.get("NETAMOUNT", ["NetAmount"])
-    tax_ref = ref_map.get("TAXAMOUNT", ["TaxAmount"])
-    return {
-        "xpr": [
-            {"ref": net_ref},
-            "+",
-            {"ref": tax_ref},
-        ],
-        "as": "GrossAmount",
-    }
+# ---------------------------------------------------------------------------
+# Expression tokeniser
+# ---------------------------------------------------------------------------
+
+_TOKEN_RE = re.compile(
+    r"'[^']*'"            # single-quoted string literal
+    r"|\d+(?:\.\d+)?"    # numeric literal
+    r"|[A-Za-z_]\w*"     # identifier (field name or keyword)
+    r"|[+\-*/=<>!]+"     # operators
+    r"|\S",              # any other single non-whitespace char
+    re.IGNORECASE,
+)
+
+_KEYWORDS = {"CASE", "WHEN", "THEN", "ELSE", "END", "AND", "OR", "NOT"}
 
 
-def _build_quantity_category_column(ref_map: dict[str, list]) -> dict:
-    """Return CSN xpr dict for the BillingQuantity CASE expression aliased as QuantityCategory.
+def _tokenise(expr: str) -> list[str]:
+    return _TOKEN_RE.findall(expr)
 
-    Logic:
-        CASE WHEN BillingQuantity > 100 THEN 'High'
-             WHEN BillingQuantity > 10  THEN 'Medium'
-             ELSE 'Low'
-        END
+
+def _is_numeric(token: str) -> bool:
+    try:
+        float(token)
+        return True
+    except ValueError:
+        return False
+
+
+def _is_string_literal(token: str) -> bool:
+    return token.startswith("'") and token.endswith("'")
+
+
+def _make_val(token: str) -> dict:
+    """Convert a literal token to a CSN val node."""
+    if _is_string_literal(token):
+        return {"val": token[1:-1]}
+    if _is_numeric(token):
+        return {"val": float(token) if "." in token else int(token)}
+    return {"val": token}
+
+
+def _resolve_ref(name: str, ref_map: dict[str, list]) -> dict:
+    """Return a CSN ref node, using table-qualified form when available."""
+    qualified = ref_map.get(name.upper())
+    if qualified:
+        return {"ref": qualified}
+    return {"ref": [name]}
+
+
+# ---------------------------------------------------------------------------
+# Expression -> CSN xpr parser
+# ---------------------------------------------------------------------------
+
+def _parse_case(tokens: list[str], pos: int, ref_map: dict) -> tuple[list, int]:
+    """Parse CASE WHEN ... THEN ... [WHEN ... THEN ...] [ELSE ...] END.
+
+    pos should point to the token *after* CASE.
+    Returns (xpr_list, new_pos).
     """
-    qty_ref = ref_map.get("BILLINGQUANTITY", ["BillingQuantity"])
-    return {
-        "xpr": [
-            "case",
-            "when", {"ref": qty_ref}, ">", {"val": 100},
-            "then", {"val": "High"},
-            "when", {"ref": qty_ref}, ">", {"val": 10},
-            "then", {"val": "Medium"},
-            "else", {"val": "Low"},
-            "end",
-        ],
-        "as": "QuantityCategory",
-    }
+    xpr: list[Any] = ["case"]
+    while pos < len(tokens):
+        tok = tokens[pos].upper()
+        if tok == "WHEN":
+            xpr.append("when")
+            pos += 1
+            field_tok = tokens[pos]; pos += 1
+            op_tok    = tokens[pos]; pos += 1
+            val_tok   = tokens[pos]; pos += 1
+            xpr.append(_resolve_ref(field_tok, ref_map))
+            xpr.append(op_tok)
+            if _is_string_literal(val_tok) or _is_numeric(val_tok):
+                xpr.append(_make_val(val_tok))
+            else:
+                xpr.append(_resolve_ref(val_tok, ref_map))
+        elif tok == "THEN":
+            xpr.append("then")
+            pos += 1
+            val_tok = tokens[pos]; pos += 1
+            if _is_string_literal(val_tok) or _is_numeric(val_tok):
+                xpr.append(_make_val(val_tok))
+            else:
+                xpr.append(_resolve_ref(val_tok, ref_map))
+        elif tok == "ELSE":
+            xpr.append("else")
+            pos += 1
+            val_tok = tokens[pos]; pos += 1
+            if _is_string_literal(val_tok) or _is_numeric(val_tok):
+                xpr.append(_make_val(val_tok))
+            else:
+                xpr.append(_resolve_ref(val_tok, ref_map))
+        elif tok == "END":
+            xpr.append("end")
+            pos += 1
+            break
+        else:
+            pos += 1
+    return xpr, pos
 
 
-def _patch_sql_editor_query(sql: str, item_alias: str) -> str:
-    """Inject GrossAmount and QuantityCategory into @DataWarehouse.sqlEditor.query.
+def _parse_arithmetic(tokens: list[str], ref_map: dict) -> list:
+    """Parse a binary arithmetic expression: A op B [op C ...]."""
+    xpr: list[Any] = []
+    for tok in tokens:
+        if tok in {"+", "-", "*", "/"}:
+            xpr.append(tok)
+        elif _is_string_literal(tok) or _is_numeric(tok):
+            xpr.append(_make_val(tok))
+        elif tok.upper() not in _KEYWORDS:
+            xpr.append(_resolve_ref(tok, ref_map))
+    return xpr
 
-    The Datasphere UI SQL editor renders this annotation string, NOT the CSN xpr
-    column nodes. Both representations must be updated so the UI shows the logic.
 
-    Inserts the two SQL expressions immediately before the \\nFROM clause.
-    Is idempotent: if 'GrossAmount' is already present the string is returned unchanged.
+def expression_to_csn_xpr(expr: str, ref_map: dict, col_name: str) -> dict:
+    """Convert a SQL expression string to a CSN xpr column dict.
+
+    Handles:
+      - Arithmetic:  'NetAmount + TaxAmount'
+      - CASE WHEN:   'CASE WHEN field op val THEN result [ELSE default] END'
+
+    Returns a CSN column dict with 'xpr' and 'as' keys.
     """
-    if not item_alias or "GrossAmount" in sql:
-        return sql
-    new_cols = (
-        f',\n  "{item_alias}"."NetAmount" + "{item_alias}"."TaxAmount" AS "GrossAmount"'
-        f',\n  CASE WHEN "{item_alias}"."BillingQuantity" > 100 THEN \'High\''
-        f' WHEN "{item_alias}"."BillingQuantity" > 10 THEN \'Medium\''
-        f' ELSE \'Low\' END AS "QuantityCategory"'
-    )
-    from_idx = sql.find('\nFROM ')
-    if from_idx == -1:
-        log.warning("Could not find \\nFROM in sqlEditor.query; SQL annotation not patched")
-        return sql
-    return sql[:from_idx] + new_cols + sql[from_idx:]
+    tokens = _tokenise(expr.strip())
+    if not tokens:
+        raise ValueError(f"Empty expression for column '{col_name}'")
+
+    if tokens[0].upper() == "CASE":
+        xpr, _ = _parse_case(tokens, 1, ref_map)
+    else:
+        xpr = _parse_arithmetic(tokens, ref_map)
+
+    if not xpr:
+        raise ValueError(
+            f"Could not parse expression for column '{col_name}': {expr!r}"
+        )
+
+    return {"xpr": xpr, "as": col_name}
 
 
-def _expand_case_expression(col: str) -> str:
-    """Expand a single-line CASE ... END expression to multi-line indented form.
+# ---------------------------------------------------------------------------
+# SQL-string patcher  (for @DataWarehouse.sqlEditor.query)
+# ---------------------------------------------------------------------------
 
-    E.g.::
+def _build_sql_expr(expr: str, ref_map: dict) -> str:
+    """Qualify bare field names in an expression string using ref_map."""
+    def _qualify(match: re.Match) -> str:
+        name = match.group(0)
+        if name.upper() in _KEYWORDS:
+            return name
+        ref = ref_map.get(name.upper())
+        if ref and len(ref) == 2:
+            return f'"{ref[0]}"."{ ref[1]}"'
+        if ref and len(ref) == 1:
+            return f'"{ref[0]}"'
+        return f'"{name}"'
 
-        CASE WHEN "x" > 100 THEN 'High' WHEN "x" > 10 THEN 'Medium' ELSE 'Low' END AS "Y"
-
-    becomes::
-
-        CASE
-            WHEN "x" > 100 THEN 'High'
-            WHEN "x" > 10 THEN 'Medium'
-            ELSE 'Low'
-          END AS "Y"
-
-    Non-CASE expressions and already-multiline expressions are returned unchanged.
-    """
-    if "CASE " not in col.upper() or "\n" in col:
-        return col
-    result = col
-    result = result.replace(" WHEN ", "\n    WHEN ")
-    result = result.replace(" ELSE ", "\n    ELSE ")
-    result = result.replace(" END ", "\n  END ")
-    # Handle END at end-of-string (no alias after it)
-    if result.rstrip().endswith(" END"):
-        result = result.rstrip()[:-4] + "\n  END"
-    return result
+    return re.sub(r"[A-Za-z_]\w*", _qualify, expr)
 
 
-def _format_sql_select(sql: str) -> str:
-    """Reformat the full SELECT ... FROM SQL string for readability.
+def _patch_sql_with_columns(sql: str, col_specs: list[dict]) -> str:
+    """Inject new column SQL expressions into the sqlEditor.query string.
 
-    - Ensures every SELECT column sits on its own 2-space-indented line.
-    - Expands single-line CASE expressions to multi-line form.
-    - Safe to call on an already-formatted string (idempotent for multiline columns).
+    col_specs: list of {name, sql_expr} dicts for columns to add.
+    Idempotent: skips any column whose name already appears in the SQL.
     """
     from_idx = sql.find("\nFROM ")
     if from_idx == -1:
+        log.warning("\\nFROM not found in sqlEditor.query; SQL annotation not patched")
         return sql
 
-    select_part = sql[:from_idx]   # Everything before \nFROM
-    from_part = sql[from_idx:]     # \nFROM (...)
+    additions = ""
+    for spec in col_specs:
+        if spec["name"] not in sql:
+            additions += f',\n  {spec["sql_expr"]} AS "{spec["name"]}"'
 
-    if not select_part.startswith("SELECT\n"):
+    if not additions:
         return sql
-
-    # Split on ",\n" to get individual column expressions.
-    # Safe because the CASE values ('High', 'Medium', 'Low') contain no commas.
-    raw_cols = select_part[len("SELECT\n"):]
-    columns = [c.strip() for c in raw_cols.split(",\n") if c.strip()]
-
-    formatted = []
-    for col in columns:
-        col = _expand_case_expression(col)
-        formatted.append("  " + col)
-
-    return "SELECT\n" + ",\n".join(formatted) + from_part
+    return sql[:from_idx] + additions + sql[from_idx:]
 
 
 # ---------------------------------------------------------------------------
-# Public generator (used by tests and mcp_server directly)
+# CSN elements type builder
 # ---------------------------------------------------------------------------
 
-def inject_calculated_fields(existing_csn: dict, view_name: str) -> dict:
-    """Inject GrossAmount and QuantityCategory into existing_csn in-place.
+def _build_element_def(col: dict) -> dict:
+    """Build the CSN elements entry for a column spec."""
+    dt    = col.get("data_type", "cds.Decimal")
+    label = col.get("label", col["name"])
+    elem: dict[str, Any] = {"type": dt, "@EndUserText.label": label}
+    if dt == "cds.Decimal":
+        elem["precision"] = col.get("precision", 34)
+        elem["scale"]     = col.get("scale", 4)
+    elif dt == "cds.String" and "length" in col:
+        elem["length"] = col["length"]
+    return elem
+
+
+# ---------------------------------------------------------------------------
+# Core injector (public — used by mcp_server and tests)
+# ---------------------------------------------------------------------------
+
+def inject_columns(existing_csn: dict, view_name: str, col_specs: list[dict]) -> dict:
+    """Inject user-defined calculated/restricted columns into existing_csn in-place.
 
     Args:
         existing_csn:  Parsed CSN dict fetched from Datasphere.
-        view_name:     Canonical technical name of the view (e.g. SV_BILLING_DOC_JOINED).
+        view_name:     Technical name of the view.
+        col_specs:     List of column dicts from the MCP tool input.
 
     Returns:
         The mutated existing_csn dict.
-
-    Raises:
-        ValueError: if the view is not found in definitions.
     """
     definitions = existing_csn.get("definitions", {})
     if view_name not in definitions:
@@ -207,39 +279,29 @@ def inject_calculated_fields(existing_csn: dict, view_name: str) -> dict:
 
     view_def = definitions[view_name]
     elements: dict = view_def.setdefault("elements", {})
-    select: dict = view_def.setdefault("query", {}).setdefault("SELECT", {})
-    columns: list = select.setdefault("columns", [])
+    select: dict   = view_def.setdefault("query", {}).setdefault("SELECT", {})
+    columns: list  = select.setdefault("columns", [])
 
     ref_map = _build_qualified_ref_map(columns)
+    sql_patches: list[dict] = []
 
-    if "GrossAmount" not in elements:
-        columns.append(_build_gross_amount_column(ref_map))
-        elements["GrossAmount"] = {
-            "type": "cds.Decimal",
-            "precision": 34,
-            "scale": 4,
-            "@EndUserText.label": "Gross Amount",
-        }
-        log.debug("Injected GrossAmount column")
+    for col in col_specs:
+        col_name = col["name"]
+        if col_name in elements:
+            log.debug("Column '%s' already exists — skipping", col_name)
+            continue
 
-    if "QuantityCategory" not in elements:
-        columns.append(_build_quantity_category_column(ref_map))
-        elements["QuantityCategory"] = {
-            "type": "cds.String",
-            "length": 6,
-            "@EndUserText.label": "Quantity Category",
-        }
-        log.debug("Injected QuantityCategory column")
+        xpr_col = expression_to_csn_xpr(col["expression"], ref_map, col_name)
+        columns.append(xpr_col)
+        elements[col_name] = _build_element_def(col)
+        log.debug("Injected column '%s' (%s)", col_name, col.get("column_type", "?"))
 
-    # Patch @DataWarehouse.sqlEditor.query – the SQL string the UI editor displays.
-    # This annotation is separate from the CSN xpr nodes and must be updated
-    # independently; otherwise the UI shows the old SQL without the new columns.
+        sql_expr = _build_sql_expr(col["expression"], ref_map)
+        sql_patches.append({"name": col_name, "sql_expr": sql_expr})
+
     sql_key = "@DataWarehouse.sqlEditor.query"
-    if sql_key in view_def:
-        item_alias = (ref_map.get("NETAMOUNT") or [""])[0]
-        patched = _patch_sql_editor_query(view_def[sql_key], item_alias)
-        view_def[sql_key] = _format_sql_select(patched)
-        log.debug("Patched and formatted sqlEditor.query with item alias '%s'", item_alias)
+    if sql_key in view_def and sql_patches:
+        view_def[sql_key] = _patch_sql_with_columns(view_def[sql_key], sql_patches)
 
     return existing_csn
 
@@ -248,13 +310,16 @@ def inject_calculated_fields(existing_csn: dict, view_name: str) -> dict:
 # Skill entry point
 # ---------------------------------------------------------------------------
 
+
 def execute(params: dict) -> dict:
-    """Add GrossAmount and QuantityCategory calculated columns to an existing SV_ view.
+    """Add user-defined calculated or restricted columns to an existing SV_ view.
 
     Params:
         view_name       Technical name of the SQL view (default: SV_BILLING_DOC_JOINED).
         space_id        Datasphere space (default: ZZ_BDC_HARNESS_1).
-        deploy          Deploy the updated view (default: False → dry-run).
+        columns         List of column specs: {name, expression, column_type,
+                        data_type, label, precision?, scale?, length?}
+        deploy          Deploy the updated view (default: False -> dry-run).
         confirm         Governance: human sign-off (required when deploy=True).
         acknowledge_ai  Governance: AI literacy ack (required when deploy=True).
     """
@@ -263,8 +328,9 @@ def execute(params: dict) -> dict:
     from executors.datasphere_cli import update_view_no_deploy as cli_update_view_no_deploy
 
     view_name = params.get("view_name", DEFAULT_VIEW_NAME).upper().strip()
-    space_id = params.get("space_id", DEFAULT_SPACE)
-    deploy = params.get("deploy", False) is True
+    space_id  = params.get("space_id", DEFAULT_SPACE)
+    deploy    = params.get("deploy", False) is True
+    col_specs = params.get("columns", [])
 
     # -----------------------------------------------------------------------
     # Input validation
@@ -274,14 +340,23 @@ def execute(params: dict) -> dict:
         errors.append(
             f"Naming rule violation: view name must start with 'SV_'. Got: '{view_name}'"
         )
+    if not col_specs:
+        errors.append("No columns specified. Provide at least one entry in 'columns'.")
+    for col in col_specs:
+        if not col.get("name"):
+            errors.append("Each column must have a 'name'.")
+        if not col.get("expression"):
+            errors.append(f"Column '{col.get('name', '?')}' is missing an 'expression'.")
+        if col.get("column_type") not in ("calculated", "restricted"):
+            errors.append(
+                f"Column '{col.get('name', '?')}' has invalid column_type "
+                f"'{col.get('column_type')}'. Must be 'calculated' or 'restricted'."
+            )
     if deploy:
         if params.get("confirm") is not True:
             errors.append("Human confirmation required: set confirm=true.")
         if params.get("acknowledge_ai") is not True:
-            errors.append(
-                "AI literacy acknowledgement required: set acknowledge_ai=true "
-                "to confirm you reviewed AI-generated output before execution."
-            )
+            errors.append("AI literacy acknowledgement required: set acknowledge_ai=true.")
     if errors:
         return {"status": "error", "errors": errors}
 
@@ -300,46 +375,31 @@ def execute(params: dict) -> dict:
         }
 
     # -----------------------------------------------------------------------
-    # Idempotency check
+    # Idempotency check — skip columns already present
     # -----------------------------------------------------------------------
-    definitions = existing_csn.get("definitions", {})
-    if view_name not in definitions:
-        return {
-            "status": "error",
-            "errors": [
-                f"View '{view_name}' not found in CSN definitions. "
-                f"Available: {list(definitions.keys())}"
-            ],
-        }
-
-    existing_elements = definitions[view_name].get("elements", {})
-    already_gross = "GrossAmount" in existing_elements
-    already_qty_cat = "QuantityCategory" in existing_elements
-
-    # Also check if the UI SQL annotation already has the columns.
-    # If elements are present but the SQL string is missing them, we still need
-    # to re-deploy so the Datasphere UI SQL editor shows the correct expressions.
-    sql_key = "@DataWarehouse.sqlEditor.query"
-    existing_sql = definitions[view_name].get(sql_key, "")
-    # Both columns must be present AND the CASE must already be multi-line (formatted).
-    sql_already_patched = "GrossAmount" in existing_sql and "\n    WHEN" in existing_sql
-
-    if already_gross and already_qty_cat and sql_already_patched:
+    existing_elements = (
+        existing_csn.get("definitions", {})
+        .get(view_name, {})
+        .get("elements", {})
+    )
+    new_cols = [c for c in col_specs if c["name"] not in existing_elements]
+    if not new_cols:
+        names = [c["name"] for c in col_specs]
         return {
             "status": "already_applied",
             "view_name": view_name,
             "space_id": space_id,
             "message": (
-                "Both GrossAmount and QuantityCategory are already present in the view. "
+                f"All requested columns {names} already exist in the view. "
                 "No changes needed."
             ),
         }
 
     # -----------------------------------------------------------------------
-    # Inject calculated fields into CSN
+    # Inject columns into CSN
     # -----------------------------------------------------------------------
     try:
-        updated_csn = inject_calculated_fields(existing_csn, view_name)
+        updated_csn = inject_columns(existing_csn, view_name, new_cols)
     except ValueError as exc:
         return {"status": "error", "errors": [str(exc)]}
 
@@ -348,6 +408,7 @@ def execute(params: dict) -> dict:
             "status": "dry_run",
             "view_name": view_name,
             "space_id": space_id,
+            "columns_added": [c["name"] for c in new_cols],
             "csn": updated_csn,
             "next_step": (
                 "Dry-run only. Set deploy=true + confirm=true + acknowledge_ai=true to deploy."
@@ -357,7 +418,7 @@ def execute(params: dict) -> dict:
     # -----------------------------------------------------------------------
     # Deploy
     # -----------------------------------------------------------------------
-    fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="calc_fields_csn_")
+    fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="add_columns_csn_")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(updated_csn, f, indent=2)
@@ -375,8 +436,9 @@ def execute(params: dict) -> dict:
         "status": "deployed",
         "view_name": view_name,
         "space_id": space_id,
+        "columns_added": [c["name"] for c in new_cols],
         "cli_output": cli_output,
     }
 
 
-register_skill("add_calculated_fields", execute)
+register_skill("add_columns", execute)

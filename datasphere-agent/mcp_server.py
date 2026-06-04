@@ -36,7 +36,8 @@ from skills.create_view import generate_csn, csn_to_temp_file, _ensure_prefix  #
 from skills.share_to_space import build_share_csn, share_csn_to_temp_file  # noqa: E402
 from skills.create_association import build_association_extension  # noqa: E402
 from skills.create_sql_view_with_association import build_sv_csn  # noqa: E402
-from skills.add_calculated_fields import inject_calculated_fields  # noqa: E402
+from skills.add_calculated_fields import inject_columns  # noqa: E402
+from skills.create_transformation_flow import build_local_table_csn, build_transformation_flow_csn  # noqa: E402
 
 # Live CLI imports (no mock mode)
 from executors.datasphere_cli import (                   # noqa: E402
@@ -391,15 +392,13 @@ TOOLS = [
         },
     },
     {
-        "name": "add_calculated_fields",
+        "name": "add_columns",
         "description": (
-            "Skill 4: Add two calculated columns to an existing SQL view (SV_) in SAP Datasphere. "
-            "GrossAmount = NetAmount + TaxAmount (cds.Decimal 34,4). "
-            "QuantityCategory = CASE WHEN BillingQuantity > 100 THEN 'High' "
-            "WHEN BillingQuantity > 10 THEN 'Medium' ELSE 'Low' END (cds.String 6). "
-            "Reads the live view CSN from Datasphere, injects the expressions, "
-            "and updates the view. Returns a dry-run by default. "
-            "Set deploy=true to apply."
+            "Skill 5: Add calculated and/or restricted columns to any SQL view (SV_) in SAP Datasphere. "
+            "Calculated columns: arithmetic or CASE-with-ELSE expressions (e.g. NetAmount + TaxAmount). "
+            "Restricted columns: CASE-WHEN without ELSE — result is NULL when condition not met. "
+            "Accepts any view name, any column names, and any SQL expressions supplied by the user. "
+            "Reads the live CSN, injects xpr definitions, and deploys. Dry-run by default."
         ),
         "inputSchema": {
             "type": "object",
@@ -411,8 +410,62 @@ TOOLS = [
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "Datasphere space ID containing the view.",
+                    "description": "Datasphere space ID. Available: ZZ_BDC_HARNESS_1, ZZ_BDC_HARNESS_2.",
                     "default": "ZZ_BDC_HARNESS_1",
+                },
+                "columns": {
+                    "type": "array",
+                    "description": (
+                        "List of columns to add. Each item defines one column. "
+                        "column_type='calculated' for arithmetic/CASE-ELSE. "
+                        "column_type='restricted' for CASE-WHEN without ELSE."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Column technical name (e.g. GrossAmount, InvoiceRevenue).",
+                            },
+                            "label": {
+                                "type": "string",
+                                "description": "Human-readable label shown in Datasphere UI.",
+                            },
+                            "column_type": {
+                                "type": "string",
+                                "enum": ["calculated", "restricted"],
+                                "description": "calculated = arithmetic/CASE with ELSE. restricted = CASE WHEN without ELSE.",
+                            },
+                            "data_type": {
+                                "type": "string",
+                                "description": "CDS type: cds.Decimal, cds.String, cds.Integer, etc.",
+                                "default": "cds.Decimal",
+                            },
+                            "precision": {
+                                "type": "integer",
+                                "description": "Precision for cds.Decimal columns.",
+                                "default": 34,
+                            },
+                            "scale": {
+                                "type": "integer",
+                                "description": "Scale for cds.Decimal columns.",
+                                "default": 4,
+                            },
+                            "length": {
+                                "type": "integer",
+                                "description": "Length for cds.String columns.",
+                            },
+                            "expression": {
+                                "type": "string",
+                                "description": (
+                                    "SQL expression string. "
+                                    "Arithmetic: 'NetAmount + TaxAmount'. "
+                                    "CASE: 'CASE WHEN BillingDocumentType = \'F2\' THEN NetAmount END'."
+                                ),
+                            },
+                        },
+                        "required": ["name", "expression", "column_type"],
+                    },
                 },
                 "deploy": {
                     "type": "boolean",
@@ -430,7 +483,7 @@ TOOLS = [
                     "default": False,
                 },
             },
-            "required": [],
+            "required": ["columns"],
         },
     },
     {
@@ -465,6 +518,60 @@ TOOLS = [
                 },
             },
             "required": ["object_name"],
+        },
+    },
+    {
+        "name": "create_transformation_flow",
+        "description": (
+            "Skill 6: Create a Transformation Flow (TF_) and target Local Table (TL_) "
+            "in SAP Datasphere. Reads a source SQL view, excludes granular key columns "
+            "(BillingDocument, BillingDocumentItem by default), groups by dimension columns "
+            "(String/Date) and aggregates measure columns (Decimal/Integer) via SUM. "
+            "Dry-run by default. Set deploy=true to create both objects in Datasphere."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source_view": {
+                    "type": "string",
+                    "description": "SQL view to aggregate (must start with SV_).",
+                    "default": "SV_BILLING_DOC_JOINED",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "Datasphere space ID. Available: ZZ_BDC_HARNESS_1, ZZ_BDC_HARNESS_2.",
+                    "default": "ZZ_BDC_HARNESS_1",
+                },
+                "exclude_columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Extra columns to exclude beyond BillingDocument and BillingDocumentItem.",
+                },
+                "tf_name": {
+                    "type": "string",
+                    "description": "Override TF technical name (default: TF_<source_base>).",
+                },
+                "tl_name": {
+                    "type": "string",
+                    "description": "Override TL technical name (default: TL_<source_base>_AGG).",
+                },
+                "deploy": {
+                    "type": "boolean",
+                    "description": "Set true to deploy. Requires confirm and acknowledge_ai.",
+                    "default": False,
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Human confirmation flag. Must be true when deploy=true.",
+                    "default": False,
+                },
+                "acknowledge_ai": {
+                    "type": "boolean",
+                    "description": "AI literacy acknowledgement. Must be true when deploy=true.",
+                    "default": False,
+                },
+            },
+            "required": [],
         },
     },
 ]
@@ -724,12 +831,53 @@ def _handle_create_sql_view_with_association(arguments: dict) -> str:
     )
 
 
-def _handle_add_calculated_fields(arguments: dict) -> str:
-    """Skill 4: Add GrossAmount and QuantityCategory calculated columns to an SV_ view."""
+def _handle_create_transformation_flow(arguments: dict) -> str:
+    """Skill 6: Build aggregated TF_ + TL_ from a source SV_ view."""
     import json as _json
-    from skills.add_calculated_fields import execute as skill4_execute
+    from skills.create_transformation_flow import execute as tf_execute
 
-    result = skill4_execute(arguments)
+    result = tf_execute(arguments)
+
+    if result["status"] == "error":
+        return "ERROR:\n" + "\n".join(f"  - {e}" for e in result.get("errors", []))
+
+    if result["status"] == "dry_run":
+        dims = result["dimensions"]
+        meas = result["measures"]
+        lines = [
+            f"DRY-RUN: Transformation Flow for '{result['source_view']}'",
+            f"  TF name : {result['tf_name']}",
+            f"  TL name : {result['tl_name']}",
+            f"  Excluded: {', '.join(result['excluded_columns'])}",
+            f"  Dimensions ({len(dims)}): {', '.join(dims)}",
+            f"  Measures  ({len(meas)}): {', '.join(meas)}",
+            "",
+            "--- Target Local Table CSN ---",
+            _json.dumps(result["tl_csn"], indent=2),
+            "",
+            "--- Transformation Flow CSN ---",
+            _json.dumps(result["tf_csn"], indent=2),
+            "",
+            result["next_step"],
+        ]
+        return "\n".join(lines)
+
+    tl_r = result["results"].get("local_table", {})
+    tf_r = result["results"].get("transformation_flow", {})
+    return (
+        f"Status: {result['status'].upper()}\n"
+        f"  TL '{result['tl_name']}': {tl_r.get('status', '?')}\n"
+        f"  TF '{result['tf_name']}': {tf_r.get('status', '?')}\n"
+        f"  Dimensions: {len(result['dimensions'])}, Measures: {len(result['measures'])}"
+    )
+
+
+def _handle_add_columns(arguments: dict) -> str:
+    """Skill 5: Add user-defined calculated/restricted columns to any SV_ view."""
+    import json as _json
+    from skills.add_calculated_fields import execute as skill5_execute
+
+    result = skill5_execute(arguments)
 
     if result["status"] == "error":
         errors = result.get("errors", ["Unknown error"])
@@ -745,24 +893,31 @@ def _handle_add_calculated_fields(arguments: dict) -> str:
 
     if result["status"] == "dry_run":
         csn_pretty = _json.dumps(result["csn"], indent=2)
+        cols_added = result.get("columns_added", [])
+        col_specs  = {c["name"]: c for c in arguments.get("columns", [])}
+        col_lines  = ""
+        for col_name in cols_added:
+            spec  = col_specs.get(col_name, {})
+            dtype = spec.get("data_type", "cds.Decimal")
+            expr  = spec.get("expression", "")
+            kind  = spec.get("column_type", "calculated")
+            col_lines += f"  - {col_name} ({dtype}) [{kind}] = {expr}\n"
         return (
-            f"DRY-RUN — calculated fields generated (not deployed)\n"
+            f"DRY-RUN — columns generated (not deployed)\n"
             f"View:  {result['view_name']}\n"
             f"Space: {result['space_id']}\n\n"
-            f"Added columns:\n"
-            f"  - GrossAmount       (cds.Decimal 34,4) = NetAmount + TaxAmount\n"
-            f"  - QuantityCategory  (cds.String 6)     = CASE WHEN BillingQuantity > 100 THEN 'High'\n"
-            f"                                                WHEN BillingQuantity > 10  THEN 'Medium'\n"
-            f"                                                ELSE 'Low' END\n\n"
+            f"Columns to add:\n{col_lines}\n"
             f"CSN:\n{csn_pretty}\n\n"
             f"Next step: {result['next_step']}"
         )
 
+    cols_added = result.get("columns_added", [])
     return (
         f"DEPLOYED\n"
-        f"View:    {result['view_name']}\n"
-        f"Space:   {result['space_id']}\n"
-        f"Output:  {result['cli_output']}"
+        f"View:          {result['view_name']}\n"
+        f"Space:         {result['space_id']}\n"
+        f"Columns added: {', '.join(cols_added)}\n"
+        f"Output:        {result['cli_output']}"
     )
 
 
@@ -777,7 +932,8 @@ TOOL_HANDLERS = {
     "create_association": _handle_create_association,
     "create_backup": _handle_create_backup,
     "create_sql_view_with_association": _handle_create_sql_view_with_association,
-    "add_calculated_fields": _handle_add_calculated_fields,
+    "add_columns": _handle_add_columns,
+    "create_transformation_flow": _handle_create_transformation_flow,
 }
 
 # ---------------------------------------------------------------------------

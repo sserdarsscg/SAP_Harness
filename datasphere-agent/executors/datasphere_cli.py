@@ -19,12 +19,52 @@ import subprocess
 import logging
 import shutil
 import os
+import sys
+import base64
+import urllib.request
+import urllib.parse
 from pathlib import Path
+
+# Allow importing config.py from parent directory
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config as _cfg
 
 log = logging.getLogger("datasphere-cli")
 
-# Datasphere tenant URL
+# Datasphere tenant URL (overridden by .env if present)
 HOST = "https://vp-dsp-poc23.eu10.hcs.cloud.sap"
+
+
+def _get_access_token() -> str:
+    """
+    Fetch a fresh OAuth access token using client credentials from .env.
+    Called automatically before every CLI command — no manual login needed.
+    """
+    try:
+        cfg = _cfg.load_config()
+    except ValueError as exc:
+        raise RuntimeError(f"Cannot load Datasphere credentials: {exc}") from exc
+
+    client_id = cfg["DSP_CLIENT_ID"]
+    client_secret = cfg["DSP_CLIENT_SECRET"]
+    token_url = cfg["DSP_TOKEN_URL"]
+
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    data = urllib.parse.urlencode({"grant_type": "client_credentials"}).encode()
+    req = urllib.request.Request(
+        token_url,
+        data=data,
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.loads(resp.read())
+            return payload["access_token"]
+    except Exception as exc:
+        raise RuntimeError(f"Failed to obtain Datasphere access token: {exc}") from exc
 
 
 def _find_cli() -> str:
@@ -68,10 +108,18 @@ def _build_cli_env(cli_path: str) -> dict[str, str]:
 def _run_cli(args: list[str]) -> dict:
     """
     Run a datasphere CLI command and return structured output.
-    Always appends --host to target the configured tenant.
+    Always appends --host and a fresh --access-token to target the configured tenant.
     """
     cli = _find_cli()
-    full_cmd = [cli] + args + ["--host", HOST]
+    try:
+        token = _get_access_token()
+        full_cmd = [cli] + args + ["--host", HOST, "--access-token", token]
+    except RuntimeError as exc:
+        return {
+            "status": "error",
+            "command": f"datasphere {' '.join(args)}",
+            "error": str(exc),
+        }
     env = _build_cli_env(cli)
 
     log.info("Running: datasphere %s", " ".join(args))

@@ -1,0 +1,76 @@
+{
+  "name": "create_transformation_flow",
+  "description": "Skill 6: Create a Transformation Flow (TF_) and target Local Table (TL_) in SAP Datasphere. Reads a source SQL view, excludes granular key columns (BillingDocument and BillingDocumentItem by default), groups by dimension columns (String/Date) and aggregates measures (Decimal/Integer) via SUM. Dry-run by default.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "source_view": {
+        "type": "string",
+        "description": "SQL view to aggregate (must start with SV_).",
+        "default": "SV_BILLING_DOC_JOINED"
+      },
+      "space_id": {
+        "type": "string",
+        "description": "Datasphere space ID.",
+        "default": "ZZ_BDC_HARNESS_1"
+      },
+      "exclude_columns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Additional columns to exclude beyond the defaults (BillingDocument, BillingDocumentItem)."
+      },
+      "tf_name": {
+        "type": "string",
+        "description": "Override TF technical name (default: TF_<source_base>)."
+      },
+      "tl_name": {
+        "type": "string",
+        "description": "Override TL technical name (default: TL_<source_base>_AGG)."
+      },
+      "deploy": {
+        "type": "boolean",
+        "description": "Set true to deploy to Datasphere. Requires confirm and acknowledge_ai.",
+        "default": false
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "Human confirmation flag. Must be true when deploy=true.",
+        "default": false
+      },
+      "acknowledge_ai": {
+        "type": "boolean",
+        "description": "AI literacy acknowledgement. Must be true when deploy=true.",
+        "default": false
+      }
+    },
+    "required": []
+  },
+  "examples": [
+    {
+      "description": "Dry-run aggregation on SV_BILLING_DOC_JOINED",
+      "input": {
+        "source_view": "SV_BILLING_DOC_JOINED",
+        "space_id": "ZZ_BDC_HARNESS_1",
+        "deploy": false
+      }
+    },
+    {
+      "description": "Deploy aggregated TF and TL",
+      "input": {
+        "source_view": "SV_BILLING_DOC_JOINED",
+        "space_id": "ZZ_BDC_HARNESS_1",
+        "deploy": true,
+        "confirm": true,
+        "acknowledge_ai": true
+      }
+    },
+    {
+      "description": "Exclude AccountingDocument as well",
+      "input": {
+        "source_view": "SV_BILLING_DOC_JOINED",
+        "exclude_columns": ["AccountingDocument"],
+        "deploy": false
+      }
+    }
+  ]
+}
