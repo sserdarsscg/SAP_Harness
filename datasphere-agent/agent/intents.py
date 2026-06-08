@@ -54,9 +54,16 @@ INTENT_MAP: dict[str, list[list[str]]] = {
         ["transformation flow", "billing"],             # domain-specific
         ["without", "billing document", "aggregated"],  # matches user phrasing
     ],
-    "add_calculated_fields": [
+    "add_columns": [
         ["calculated", "field"],            # "add calculated field"
         ["calculated", "column"],           # "calculated column"
+        ["add", "column"],                  # "add column to view"
+        ["add", "measure"],                 # "add measure"
+        ["add", "kpi"],                     # "add KPI column"
+        ["restricted", "column"],           # "add restricted column"
+        ["profit", "column"],               # "profit column"
+        ["margin", "column"],               # "margin column"
+        ["profitability"],                  # "profitability analysis"
         ["gross", "amount"],                # "gross amount"
         ["quantity", "category"],           # "quantity category"
         ["add", "formula"],                 # "add formula to view"

@@ -1,3 +1,9 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "chat.tools.terminal.autoApprove": {
+        "/^cd \"c:\\\\Users\\\\ssorgun\\\\OneDrive - Capgemini\\\\Desktop\\\\SAP_Harness\\\\datasphere-agent\"; \\$payload = '\\{\"jsonrpc\":\"2\\.0\",\"id\":1,\"method\":\"tools/call\",\"params\":\\{\"name\":\"read_view\",\"arguments\":\\{\"technical_name\":\"SV_BILLING_DOC_JOINED\",\"space_id\":\"ZZ_BDC_HARNESS_1\"\\}\\}\\}'; \\$payload \\| python mcp_server\\.py 2>\\$null$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

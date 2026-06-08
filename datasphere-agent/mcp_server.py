@@ -36,7 +36,7 @@ from skills.create_view import generate_csn, csn_to_temp_file, _ensure_prefix  #
 from skills.share_to_space import build_share_csn, share_csn_to_temp_file  # noqa: E402
 from skills.create_association import build_association_extension  # noqa: E402
 from skills.create_sql_view_with_association import build_sv_csn  # noqa: E402
-from skills.add_calculated_fields import inject_columns  # noqa: E402
+from skills.add_columns import inject_columns  # noqa: E402
 from skills.create_transformation_flow import build_local_table_csn, build_transformation_flow_csn  # noqa: E402
 
 # Live CLI imports (no mock mode)
@@ -875,7 +875,7 @@ def _handle_create_transformation_flow(arguments: dict) -> str:
 def _handle_add_columns(arguments: dict) -> str:
     """Skill 5: Add user-defined calculated/restricted columns to any SV_ view."""
     import json as _json
-    from skills.add_calculated_fields import execute as skill5_execute
+    from skills.add_columns import execute as skill5_execute
 
     result = skill5_execute(arguments)
 

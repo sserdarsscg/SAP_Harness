@@ -124,15 +124,40 @@ def _parse_case(tokens: list[str], pos: int, ref_map: dict) -> tuple[list, int]:
         if tok == "WHEN":
             xpr.append("when")
             pos += 1
-            field_tok = tokens[pos]; pos += 1
-            op_tok    = tokens[pos]; pos += 1
-            val_tok   = tokens[pos]; pos += 1
-            xpr.append(_resolve_ref(field_tok, ref_map))
-            xpr.append(op_tok)
-            if _is_string_literal(val_tok) or _is_numeric(val_tok):
-                xpr.append(_make_val(val_tok))
+            # Collect all condition tokens until THEN (respecting parenthesis depth)
+            cond_toks: list[str] = []
+            depth = 0
+            while pos < len(tokens):
+                t = tokens[pos]
+                if t == "(":
+                    depth += 1
+                    cond_toks.append(t)
+                    pos += 1
+                elif t == ")":
+                    depth -= 1
+                    cond_toks.append(t)
+                    pos += 1
+                elif t.upper() == "THEN" and depth == 0:
+                    break
+                else:
+                    cond_toks.append(t)
+                    pos += 1
+            # Find the outermost comparison operator and split the condition
+            _CMP_OPS = {">=", "<=", "<>", "!=", ">", "<", "="}
+            split_at = -1
+            d = 0
+            for ci, ct in enumerate(cond_toks):
+                if ct == "(": d += 1
+                elif ct == ")": d -= 1
+                elif d == 0 and ct in _CMP_OPS:
+                    split_at = ci
+                    break
+            if split_at >= 0:
+                xpr.extend(_parse_arithmetic(cond_toks[:split_at], ref_map))
+                xpr.append(cond_toks[split_at])
+                xpr.extend(_parse_arithmetic(cond_toks[split_at + 1:], ref_map))
             else:
-                xpr.append(_resolve_ref(val_tok, ref_map))
+                xpr.extend(_parse_arithmetic(cond_toks, ref_map))
         elif tok == "THEN":
             xpr.append("then")
             pos += 1
@@ -158,17 +183,78 @@ def _parse_case(tokens: list[str], pos: int, ref_map: dict) -> tuple[list, int]:
     return xpr, pos
 
 
+def _apply_safe_division(xpr: list) -> list:
+    """Wrap column refs following '/' in NULLIF(ref, 0) to guard against division by zero."""
+    result: list[Any] = []
+    i = 0
+    while i < len(xpr):
+        item = xpr[i]
+        if (
+            item == "/"
+            and i + 1 < len(xpr)
+            and isinstance(xpr[i + 1], dict)
+            and "ref" in xpr[i + 1]
+        ):
+            result.append("/")
+            result.append({"func": "NULLIF", "args": [xpr[i + 1], {"val": 0}]})
+            i += 2
+        else:
+            result.append(item)
+            i += 1
+    return result
+
+
 def _parse_arithmetic(tokens: list[str], ref_map: dict) -> list:
-    """Parse a binary arithmetic expression: A op B [op C ...]."""
+    """Parse a compound arithmetic expression including parentheses and function calls."""
     xpr: list[Any] = []
-    for tok in tokens:
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
         if tok in {"+", "-", "*", "/"}:
             xpr.append(tok)
+            i += 1
+        elif tok in {"(", ")"}:
+            xpr.append(tok)
+            i += 1
         elif _is_string_literal(tok) or _is_numeric(tok):
             xpr.append(_make_val(tok))
+            i += 1
         elif tok.upper() not in _KEYWORDS:
-            xpr.append(_resolve_ref(tok, ref_map))
-    return xpr
+            if i + 1 < len(tokens) and tokens[i + 1] == "(":
+                func_name = tok.upper()
+                i += 2
+                raw_args: list[list[str]] = []
+                current: list[str] = []
+                depth = 1
+                while i < len(tokens):
+                    t = tokens[i]
+                    i += 1
+                    if t == "(":
+                        depth += 1
+                        current.append(t)
+                    elif t == ")":
+                        depth -= 1
+                        if depth == 0:
+                            raw_args.append(current)
+                            break
+                        else:
+                            current.append(t)
+                    elif t == "," and depth == 1:
+                        raw_args.append(current)
+                        current = []
+                    else:
+                        current.append(t)
+                csn_args: list[Any] = []
+                for arg_toks in raw_args:
+                    parsed = _parse_arithmetic(arg_toks, ref_map)
+                    csn_args.append(parsed[0] if len(parsed) == 1 else parsed)
+                xpr.append({"func": func_name, "args": csn_args})
+            else:
+                xpr.append(_resolve_ref(tok, ref_map))
+                i += 1
+        else:
+            i += 1
+    return _apply_safe_division(xpr)
 
 
 def expression_to_csn_xpr(expr: str, ref_map: dict, col_name: str) -> dict:
@@ -203,18 +289,44 @@ def expression_to_csn_xpr(expr: str, ref_map: dict, col_name: str) -> dict:
 
 def _build_sql_expr(expr: str, ref_map: dict) -> str:
     """Qualify bare field names in an expression string using ref_map."""
+    # Step 1: Protect single-quoted string literals so their contents are not touched.
+    # Placeholders are \x00<index>\x00 — pure digits, so they never match [A-Za-z_]\w*.
+    literals: list[str] = []
+
+    def _save_literal(m: re.Match) -> str:
+        literals.append(m.group(0))
+        return f"\x00{len(literals) - 1}\x00"
+
+    protected = re.sub(r"'[^']*'", _save_literal, expr)
+
     def _qualify(match: re.Match) -> str:
         name = match.group(0)
         if name.upper() in _KEYWORDS:
             return name
         ref = ref_map.get(name.upper())
         if ref and len(ref) == 2:
-            return f'"{ref[0]}"."{ ref[1]}"'
+            return f'"{ref[0]}"."{ref[1]}"'
         if ref and len(ref) == 1:
             return f'"{ref[0]}"'
         return f'"{name}"'
 
-    return re.sub(r"[A-Za-z_]\w*", _qualify, expr)
+    # Step 2: Qualify identifiers. Skip function calls (followed immediately by '(').
+    # Using (?!\() instead of (?!\s*\() so that keywords like WHEN followed by ' ('
+    # are matched in full and passed to _qualify, where they are returned unchanged.
+    qualified = re.sub(r"[A-Za-z_]\w*(?!\()", _qualify, protected)
+
+    # Step 3: Wrap column refs after '/' in NULLIF(..., 0) to guard against division by zero.
+    qualified = re.sub(
+        r'/\s*("(?:[^"]+)"(?:\."(?:[^"]+)")?)',
+        r'/ NULLIF(\1, 0)',
+        qualified,
+    )
+
+    # Step 4: Restore string literals.
+    for i, lit in enumerate(literals):
+        qualified = qualified.replace(f"\x00{i}\x00", lit)
+
+    return qualified
 
 
 def _patch_sql_with_columns(sql: str, col_specs: list[dict]) -> str:

@@ -13,5 +13,5 @@ from skills import create_view        # noqa: F401
 from skills import create_backup      # noqa: F401
 from skills import share_to_space     # noqa: F401
 from skills import create_association  # noqa: F401
-from skills import add_calculated_fields  # noqa: F401
+from skills import add_columns  # noqa: F401
 from skills import create_transformation_flow  # noqa: F401
