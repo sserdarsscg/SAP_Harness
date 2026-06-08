@@ -1,31 +1,40 @@
 {
   "name": "create_transformation_flow",
-  "description": "Skill 6: Create a Transformation Flow (TF_) and target Local Table (TL_) in SAP Datasphere. Reads a source SQL view, excludes granular key columns (BillingDocument and BillingDocumentItem by default), groups by dimension columns (String/Date) and aggregates measures (Decimal/Integer) via SUM. Dry-run by default.",
+  "description": "Generic Datasphere Transformation Engine. Creates a Transformation Flow (TF_) and target Local Table (TL_) from any deployed SQL view (SV_). Two modes: 'simple' (1-to-1 copy, no aggregation) and 'aggregated' (GROUP BY dimensions, SUM measures). Generates a node-based TF CSN with sqltransform1, target1, connections, and attributeMappings. Dry-run by default.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "source_view": {
         "type": "string",
-        "description": "SQL view to aggregate (must start with SV_).",
-        "default": "SV_BILLING_DOC_JOINED"
+        "description": "Technical name of the source SQL view (must start with SV_)."
       },
       "space_id": {
         "type": "string",
-        "description": "Datasphere space ID.",
-        "default": "ZZ_BDC_HARNESS_1"
+        "description": "Datasphere space ID containing the source view."
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["simple", "aggregated"],
+        "description": "'simple' (default): 1-to-1 copy, all columns, no GROUP BY. 'aggregated': GROUP BY String/Date dimensions, SUM Decimal/Integer measures.",
+        "default": "simple"
       },
       "exclude_columns": {
         "type": "array",
         "items": { "type": "string" },
-        "description": "Additional columns to exclude beyond the defaults (BillingDocument, BillingDocumentItem)."
+        "description": "Column names to exclude from the flow (case-insensitive). No columns are excluded by default."
+      },
+      "key_columns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Explicit list of column names to use as the primary key in the target Local Table (simple mode only). If not provided, falls back to source view key annotations, then first column. Use this when the source view is a JOIN result (e.g. ['BillingDocument', 'BillingDocumentItem'])."
       },
       "tf_name": {
         "type": "string",
-        "description": "Override TF technical name (default: TF_<source_base>)."
+        "description": "Override the generated TF_ name (must start with TF_). Default: TF_<source_base>."
       },
       "tl_name": {
         "type": "string",
-        "description": "Override TL technical name (default: TL_<source_base>_AGG)."
+        "description": "Override the generated TL_ name (must start with TL_). Default: TL_<source_base> (simple) or TL_<source_base>_AGG (aggregated)."
       },
       "deploy": {
         "type": "boolean",
@@ -43,33 +52,46 @@
         "default": false
       }
     },
-    "required": []
+    "required": ["source_view", "space_id"]
   },
   "examples": [
     {
-      "description": "Dry-run aggregation on SV_BILLING_DOC_JOINED",
+      "description": "Dry-run simple (1-to-1 copy) on any SV_ view",
       "input": {
         "source_view": "SV_BILLING_DOC_JOINED",
         "space_id": "ZZ_BDC_HARNESS_1",
+        "mode": "simple",
         "deploy": false
       }
     },
     {
-      "description": "Deploy aggregated TF and TL",
+      "description": "Dry-run aggregated mode (GROUP BY + SUM)",
       "input": {
         "source_view": "SV_BILLING_DOC_JOINED",
         "space_id": "ZZ_BDC_HARNESS_1",
+        "mode": "aggregated",
+        "deploy": false
+      }
+    },
+    {
+      "description": "Aggregated mode excluding specific columns",
+      "input": {
+        "source_view": "SV_BILLING_DOC_JOINED",
+        "space_id": "ZZ_BDC_HARNESS_1",
+        "mode": "aggregated",
+        "exclude_columns": ["BillingDocument", "BillingDocumentItem"],
+        "deploy": false
+      }
+    },
+    {
+      "description": "Deploy simple transformation flow",
+      "input": {
+        "source_view": "SV_BILLING_DOC_JOINED",
+        "space_id": "ZZ_BDC_HARNESS_1",
+        "mode": "simple",
         "deploy": true,
         "confirm": true,
         "acknowledge_ai": true
-      }
-    },
-    {
-      "description": "Exclude AccountingDocument as well",
-      "input": {
-        "source_view": "SV_BILLING_DOC_JOINED",
-        "exclude_columns": ["AccountingDocument"],
-        "deploy": false
       }
     }
   ]
