@@ -325,3 +325,29 @@ def update_view_no_deploy(space_id: str, csn_json_path: str, technical_name: str
         "--no-deploy",
     ])
     return _format_result(result)
+
+
+def create_task_chain(space_id: str, csn_json_path: str, technical_name: str) -> str:
+    """Run: datasphere objects task-chains create --space <space> --technical-name <name> --file-path <path>"""
+    result = _run_cli([
+        "objects", "task-chains", "create",
+        "--space", space_id,
+        "--technical-name", technical_name,
+        "--file-path", csn_json_path,
+    ])
+    return _format_result(result)
+
+
+def read_task_chain(space_id: str, technical_name: str) -> dict | None:
+    """
+    Read a task chain definition and return the parsed JSON dict.
+    Returns None on error.
+    """
+    result = _run_cli([
+        "objects", "task-chains", "read",
+        "--space", space_id,
+        "--technical-name", technical_name,
+    ])
+    if result["status"] == "error":
+        return None
+    return result.get("data")

@@ -54,6 +54,12 @@ INTENT_MAP: dict[str, list[list[str]]] = {
         ["transformation flow", "billing"],             # domain-specific
         ["without", "billing document", "aggregated"],  # matches user phrasing
     ],
+    "create_task_chain": [
+        ["task chain"],                              # "create a task chain"
+        ["task chain", "transformation flow"],      # "wrap transformation flow in a task chain"
+        ["tc_"],                                     # "create TC_ for TF_SALES"
+        ["schedule", "transformation"],             # "schedule transformation flow"
+    ],
     "add_columns": [
         ["calculated", "field"],            # "add calculated field"
         ["calculated", "column"],           # "calculated column"

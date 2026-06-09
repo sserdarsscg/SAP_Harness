@@ -210,5 +210,44 @@ class TestCreateSqlViewWithAssociationDescriptor(ToolDescriptorContractMixin, un
         self.assertFalse(props["deploy"]["default"])
 
 
+class TestCreateTaskChainDescriptor(ToolDescriptorContractMixin, unittest.TestCase):
+    """Contract checks for create_task_chain_tool.json."""
+
+    tool_path = "mcp_tools/create_task_chain_tool.json"
+
+    @classmethod
+    def setUpClass(cls):
+        with open(
+            os.path.join(MCP_TOOLS_DIR, "create_task_chain_tool.json"),
+            encoding="utf-8",
+        ) as f:
+            cls.descriptor = json.load(f)
+
+    def test_name_matches_skill(self):
+        self.assertEqual(self.descriptor["name"], "create_task_chain")
+
+    def test_required_contains_tf_name(self):
+        required = self.descriptor["inputSchema"]["required"]
+        self.assertIn("tf_name", required)
+
+    def test_deploy_defaults_to_false(self):
+        props = self.descriptor["inputSchema"]["properties"]
+        self.assertFalse(props["deploy"]["default"])
+
+    def test_space_id_default_is_harness_1(self):
+        props = self.descriptor["inputSchema"]["properties"]
+        self.assertEqual(props["space_id"]["default"], "ZZ_BDC_HARNESS_1")
+
+    def test_folder_param_exists(self):
+        """folder param must be declared (optional, no default)."""
+        props = self.descriptor["inputSchema"]["properties"]
+        self.assertIn("folder", props)
+
+    def test_tc_name_override_param_exists(self):
+        """tc_name override param must be declared."""
+        props = self.descriptor["inputSchema"]["properties"]
+        self.assertIn("tc_name", props)
+
+
 if __name__ == "__main__":
     unittest.main()

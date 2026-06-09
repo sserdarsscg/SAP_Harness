@@ -38,6 +38,7 @@ from skills.create_association import build_association_extension  # noqa: E402
 from skills.create_sql_view_with_association import build_sv_csn  # noqa: E402
 from skills.add_columns import inject_columns  # noqa: E402
 from skills.create_transformation_flow import build_local_table_csn, build_transformation_flow_csn  # noqa: E402
+from skills.create_task_chain import build_task_chain_csn, derive_tc_name  # noqa: E402
 
 # Live CLI imports (no mock mode)
 from executors.datasphere_cli import (                   # noqa: E402
@@ -574,6 +575,54 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "create_task_chain",
+        "description": (
+            "Skill 7: Create a Datasphere Task Chain (TC_) that executes an existing "
+            "Transformation Flow (TF_). Generates a taskchains CSN with a START node and "
+            "a TASK node (applicationId=TRANSFORMATION_FLOWS, activity=EXECUTE). "
+            "TC name is derived as TC_<TF_NAME> for 1:1 traceability. "
+            "Dry-run by default. Set deploy=true to create in Datasphere."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tf_name": {
+                    "type": "string",
+                    "description": "Technical name of the Transformation Flow to execute (must start with TF_).",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "Datasphere space ID. Available: ZZ_BDC_HARNESS_1, ZZ_BDC_HARNESS_2.",
+                    "default": "ZZ_BDC_HARNESS_1",
+                },
+                "tc_name": {
+                    "type": "string",
+                    "description": "Override the generated TC_ name (must start with TC_). Default: TC_<tf_name>.",
+                },
+                "folder": {
+                    "type": "string",
+                    "description": "Optional folder assignment for _meta.dependencies.folderAssignment.",
+                },
+                "deploy": {
+                    "type": "boolean",
+                    "description": "Set true to deploy. Requires confirm and acknowledge_ai.",
+                    "default": False,
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Human confirmation flag. Must be true when deploy=true.",
+                    "default": False,
+                },
+                "acknowledge_ai": {
+                    "type": "boolean",
+                    "description": "AI literacy acknowledgement. Must be true when deploy=true.",
+                    "default": False,
+                },
+            },
+            "required": ["tf_name"],
+        },
+    },
 ]
 
 
@@ -921,6 +970,40 @@ def _handle_add_columns(arguments: dict) -> str:
     )
 
 
+def _handle_create_task_chain(arguments: dict) -> str:
+    """Skill 7: Build and optionally deploy a Task Chain (TC_) wrapping a Transformation Flow (TF_)."""
+    import json as _json
+    from skills.create_task_chain import execute as tc_execute
+
+    result = tc_execute(arguments)
+
+    if result["status"] == "error":
+        return "ERROR:\n" + "\n".join(f"  - {e}" for e in result.get("errors", []))
+
+    if result["status"] == "dry_run":
+        lines = [
+            f"DRY-RUN: Task Chain for '{result['tf_name']}'",
+            f"  TC name : {result['tc_name']}",
+            f"  TF name : {result['tf_name']}",
+            f"  Space   : {result['space_id']}",
+            f"  Folder  : {result['folder'] or '(none)'}",
+            "",
+            "--- Task Chain CSN ---",
+            _json.dumps(result["tc_csn"], indent=2),
+            "",
+            result["next_step"],
+        ]
+        return "\n".join(lines)
+
+    tc_r = result["results"].get("task_chain", {})
+    return (
+        f"Status: {result['status'].upper()}\n"
+        f"  TC '{result['tc_name']}': {tc_r.get('status', '?')}\n"
+        f"  TF '{result['tf_name']}' wrapped\n"
+        f"  Space: {result['space_id']}"
+    )
+
+
 TOOL_HANDLERS = {
     "bronze_to_silver": _handle_bronze_to_silver,
     "read_view": _handle_read_view,
@@ -934,6 +1017,7 @@ TOOL_HANDLERS = {
     "create_sql_view_with_association": _handle_create_sql_view_with_association,
     "add_columns": _handle_add_columns,
     "create_transformation_flow": _handle_create_transformation_flow,
+    "create_task_chain": _handle_create_task_chain,
 }
 
 # ---------------------------------------------------------------------------
