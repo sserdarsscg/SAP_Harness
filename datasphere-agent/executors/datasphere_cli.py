@@ -328,34 +328,12 @@ def update_view_no_deploy(space_id: str, csn_json_path: str, technical_name: str
 
 
 def create_task_chain(space_id: str, csn_json_path: str, technical_name: str) -> str:
-    """Run: datasphere objects task-chains create --space <space> --file-path <path> --save-anyway"""
+    """Run: datasphere objects task-chains create --space <space> --technical-name <name> --file-path <path>"""
     result = _run_cli([
         "objects", "task-chains", "create",
         "--space", space_id,
-        "--file-path", csn_json_path,
-        "--save-anyway",
-    ])
-    return _format_result(result)
-
-
-def update_task_chain(space_id: str, csn_json_path: str, technical_name: str) -> str:
-    """Run: datasphere objects task-chains update --space <space> --technical-name <name> --file-path <path> --save-anyway"""
-    result = _run_cli([
-        "objects", "task-chains", "update",
-        "--space", space_id,
         "--technical-name", technical_name,
         "--file-path", csn_json_path,
-        "--save-anyway",
-    ])
-    return _format_result(result)
-
-
-def run_task_chain(space_id: str, technical_name: str) -> str:
-    """Run: datasphere tasks chains run --space <space> --object <technical_name>"""
-    result = _run_cli([
-        "tasks", "chains", "run",
-        "--space", space_id,
-        "--object", technical_name,
     ])
     return _format_result(result)
 

@@ -13,10 +13,9 @@ This ensures a 1:1 traceable relationship between each Task Chain and its Transf
 The `tc_name` parameter overrides the derived name when a custom name is required.
 `_meta.dependencies.folderAssignment` is included only when `folder` param is supplied.
 
-Three deployment modes:
-  dry_run              (default) — returns the CSN dict without touching Datasphere
-  deploy               (deploy=True + confirm=True + acknowledge_ai=True) — creates TC via CLI
-  deploy + run         (deploy=True + run=True + confirm=True + acknowledge_ai=True) — creates TC then immediately executes it
+Two deployment modes:
+  dry_run  (default) — returns the CSN dict without touching Datasphere
+  deploy   (deploy=True + confirm=True + acknowledge_ai=True) — writes via CLI
 """
 
 from __future__ import annotations
@@ -95,6 +94,9 @@ def build_task_chain_csn(
         }
 
     return {
+        "version": {"csn": "1.0"},
+        "meta": {"creator": "CDS Compiler v1.19.2"},
+        "$version": "1.0",
         "taskchains": {tc_name: task_chain_def},
     }
 
@@ -127,7 +129,6 @@ def execute(params: dict) -> dict:
     tc_name        : str   – Override TC name (default: TC_<tf_name>)
     folder         : str   – folderAssignment value for _meta (optional)
     deploy         : bool  – True = deploy via CLI (default: False)
-    run            : bool  – True = execute TC immediately after deploy (requires deploy=True)
     confirm        : bool  – Human confirmation gate (required when deploy=True)
     acknowledge_ai : bool  – AI literacy gate (required when deploy=True)
     """
@@ -139,7 +140,6 @@ def execute(params: dict) -> dict:
     tc_name_override: str | None = params.get("tc_name")
     folder: str | None = params.get("folder") or None
     deploy: bool = params.get("deploy", False) is True
-    run: bool = params.get("run", False) is True
     confirm: bool = params.get("confirm", False) is True
     acknowledge_ai: bool = params.get("acknowledge_ai", False) is True
 
@@ -152,9 +152,6 @@ def execute(params: dict) -> dict:
 
     if tc_name_override and not tc_name_override.upper().startswith("TC_"):
         errors.append(f"tc_name must start with TC_ (got '{tc_name_override}')")
-
-    if run and not deploy:
-        errors.append("run=True requires deploy=True. Set deploy=True to create the Task Chain before running.")
 
     if errors:
         return {"status": "error", "errors": errors}
@@ -183,8 +180,7 @@ def execute(params: dict) -> dict:
             "tc_csn": tc_csn,
             "next_step": (
                 "Review the CSN above. "
-                "To deploy, call again with deploy=true, confirm=true, acknowledge_ai=true. "
-                "Add run=true to deploy and immediately execute the Task Chain."
+                "To deploy, call again with deploy=true, confirm=true, acknowledge_ai=true."
             ),
         }
 
@@ -203,8 +199,6 @@ def execute(params: dict) -> dict:
     # 6. Write CSN to temp file and deploy via CLI
     # ------------------------------------------------------------------
     from executors.datasphere_cli import create_task_chain as cli_create_task_chain
-    from executors.datasphere_cli import update_task_chain as cli_update_task_chain
-    from executors.datasphere_cli import run_task_chain as cli_run_task_chain
 
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -221,42 +215,7 @@ def execute(params: dict) -> dict:
             csn_json_path=tmp_path,
             technical_name=tc_name,
         )
-        # If create fails (object already exists), fall back to update
-        if "FAILED" in cli_output or "Status: FAILED" in cli_output:
-            cli_output = cli_update_task_chain(
-                space_id=space_id,
-                csn_json_path=tmp_path,
-                technical_name=tc_name,
-            )
         task_chain_status = "success" if "Status: OK" in cli_output else "error"
-
-        # ------------------------------------------------------------------
-        # 7. Optionally run the Task Chain immediately after deploy
-        # ------------------------------------------------------------------
-        if run:
-            run_output = cli_run_task_chain(
-                space_id=space_id,
-                technical_name=tc_name,
-            )
-            run_status = "success" if "Status: OK" in run_output else "error"
-            return {
-                "status": "deployed_and_running",
-                "tf_name": tf_name,
-                "tc_name": tc_name,
-                "space_id": space_id,
-                "folder": folder,
-                "results": {
-                    "task_chain": {
-                        "status": task_chain_status,
-                        "message": cli_output,
-                    },
-                    "run": {
-                        "status": run_status,
-                        "message": run_output,
-                    },
-                },
-            }
-
         return {
             "status": "deployed",
             "tf_name": tf_name,

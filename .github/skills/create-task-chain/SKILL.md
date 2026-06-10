@@ -63,7 +63,6 @@ This skill is invoked when the user says something like:
 | `tc_name` | string | `TC_<tf_name>` | No | Override the generated Task Chain name (must start with `TC_`) |
 | `folder` | string | `null` | No | Folder assignment for `_meta.dependencies.folderAssignment` |
 | `deploy` | bool | `false` | No | `true` = deploy to Datasphere |
-| `run` | bool | `false` | No | `true` = execute TC immediately after deploy (requires `deploy=true`) |
 | `confirm` | bool | `false` | No | Human confirmation (required for deploy) |
 | `acknowledge_ai` | bool | `false` | No | AI literacy acknowledgement (required for deploy) |
 
@@ -102,21 +101,6 @@ This skill is invoked when the user says something like:
 }
 ```
 
-### Deployed and Running (`deploy=true, run=true`)
-
-```json
-{
-  "status": "deployed_and_running",
-  "tf_name": "TF_BILLING_DOC_JOINED",
-  "tc_name": "TC_TF_BILLING_DOC_JOINED",
-  "space_id": "ZZ_BDC_HARNESS_1",
-  "results": {
-    "task_chain": { "status": "success", "message": "..." },
-    "run": { "status": "success", "message": "..." }
-  }
-}
-```
-
 ---
 
 ## Deployment Workflow
@@ -133,9 +117,6 @@ Step 2: Build Task Chain CSN
 
 Step 3 (if deploy=true):
   datasphere objects task-chains create --space <space> --technical-name <tc_name> --file-path <tmp.json>
-
-Step 4 (if run=true):
-  datasphere objects task-chains run --space <space> --technical-name <tc_name>
 ```
 
 ---
@@ -208,7 +189,6 @@ Follows project naming conventions (see `.github/instructions/naming-conventions
 |-------|-------|------------|
 | `tf_name must start with TF_` | Invalid TF name provided | Ensure name starts with `TF_` |
 | `tc_name must start with TC_` | Invalid override name | Ensure override starts with `TC_` |
-| `run=True requires deploy=True` | run without deploy | Set `deploy=true` alongside `run=true` |
 | `Deploy blocked: set confirm=true and acknowledge_ai=true` | Safety guard not satisfied | Pass both flags |
 | `Space not allowed: create_task_chain only permitted in ZZ_BDC_HARNESS_1` | Wrong space | Use `ZZ_BDC_HARNESS_1` |
 | `datasphere CLI not found` | CLI not installed | Run `npm install -g @sap/datasphere-cli` |
@@ -240,15 +220,6 @@ result = execute({
 result = execute({
     "tf_name": "TF_BILLING_DOC_JOINED",
     "deploy": True,
-    "confirm": True,
-    "acknowledge_ai": True
-})
-
-# Deploy and immediately run via CLI
-result = execute({
-    "tf_name": "TF_BILLING_DOC_JOINED",
-    "deploy": True,
-    "run": True,
     "confirm": True,
     "acknowledge_ai": True
 })
