@@ -95,9 +95,6 @@ def build_task_chain_csn(
         }
 
     return {
-        "version": {"csn": "1.0"},
-        "meta": {"creator": "CDS Compiler v1.19.2"},
-        "$version": "1.0",
         "taskchains": {tc_name: task_chain_def},
     }
 
@@ -206,6 +203,7 @@ def execute(params: dict) -> dict:
     # 6. Write CSN to temp file and deploy via CLI
     # ------------------------------------------------------------------
     from executors.datasphere_cli import create_task_chain as cli_create_task_chain
+    from executors.datasphere_cli import update_task_chain as cli_update_task_chain
     from executors.datasphere_cli import run_task_chain as cli_run_task_chain
 
     with tempfile.NamedTemporaryFile(
@@ -223,6 +221,13 @@ def execute(params: dict) -> dict:
             csn_json_path=tmp_path,
             technical_name=tc_name,
         )
+        # If create fails (object already exists), fall back to update
+        if "FAILED" in cli_output or "Status: FAILED" in cli_output:
+            cli_output = cli_update_task_chain(
+                space_id=space_id,
+                csn_json_path=tmp_path,
+                technical_name=tc_name,
+            )
         task_chain_status = "success" if "Status: OK" in cli_output else "error"
 
         # ------------------------------------------------------------------
