@@ -268,6 +268,27 @@ class TestExecuteValidation(unittest.TestCase):
         })
         self.assertEqual(result["status"], "error")
 
+    def test_run_without_deploy_returns_error(self):
+        """run=True without deploy=True must be rejected immediately."""
+        result = execute({
+            "tf_name": "TF_TEST",
+            "run": True,
+            "deploy": False,
+        })
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(any("deploy=True" in e for e in result["errors"]))
+
+    def test_run_true_in_dry_run_is_ignored(self):
+        """run=True alone (without deploy) produces error, not dry_run."""
+        result = execute({"tf_name": "TF_TEST", "run": True})
+        self.assertEqual(result["status"], "error")
+
+    def test_dry_run_does_not_include_run_in_response(self):
+        """A plain dry-run should not contain a run key in results."""
+        result = execute({"tf_name": "TF_TEST"})
+        self.assertEqual(result["status"], "dry_run")
+        self.assertNotIn("results", result)
+
 
 if __name__ == "__main__":
     unittest.main()

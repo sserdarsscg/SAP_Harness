@@ -26,6 +26,11 @@
         "description": "Set true to deploy to Datasphere. Requires confirm and acknowledge_ai.",
         "default": false
       },
+      "run": {
+        "type": "boolean",
+        "description": "Set true to execute the Task Chain immediately after deploy. Requires deploy=true.",
+        "default": false
+      },
       "confirm": {
         "type": "boolean",
         "description": "Human confirmation flag. Must be true when deploy=true.",

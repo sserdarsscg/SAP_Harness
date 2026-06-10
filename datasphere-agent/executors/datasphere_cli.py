@@ -338,6 +338,16 @@ def create_task_chain(space_id: str, csn_json_path: str, technical_name: str) ->
     return _format_result(result)
 
 
+def run_task_chain(space_id: str, technical_name: str) -> str:
+    """Run: datasphere objects task-chains run --space <space> --technical-name <name>"""
+    result = _run_cli([
+        "objects", "task-chains", "run",
+        "--space", space_id,
+        "--technical-name", technical_name,
+    ])
+    return _format_result(result)
+
+
 def read_task_chain(space_id: str, technical_name: str) -> dict | None:
     """
     Read a task chain definition and return the parsed JSON dict.

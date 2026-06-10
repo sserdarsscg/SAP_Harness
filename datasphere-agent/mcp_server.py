@@ -609,6 +609,11 @@ TOOLS = [
                     "description": "Set true to deploy. Requires confirm and acknowledge_ai.",
                     "default": False,
                 },
+                "run": {
+                    "type": "boolean",
+                    "description": "Set true to execute the Task Chain immediately after deploy. Requires deploy=true.",
+                    "default": False,
+                },
                 "confirm": {
                     "type": "boolean",
                     "description": "Human confirmation flag. Must be true when deploy=true.",
@@ -994,6 +999,16 @@ def _handle_create_task_chain(arguments: dict) -> str:
             result["next_step"],
         ]
         return "\n".join(lines)
+
+    if result["status"] == "deployed_and_running":
+        tc_r = result["results"].get("task_chain", {})
+        run_r = result["results"].get("run", {})
+        return (
+            f"Status: DEPLOYED AND RUNNING\n"
+            f"  TC '{result['tc_name']}': deploy={tc_r.get('status', '?')}, run={run_r.get('status', '?')}\n"
+            f"  TF '{result['tf_name']}' triggered\n"
+            f"  Space: {result['space_id']}"
+        )
 
     tc_r = result["results"].get("task_chain", {})
     return (
